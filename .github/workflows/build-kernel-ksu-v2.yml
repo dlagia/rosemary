@@ -5775,6 +5775,8 @@ jobs:
           # branch default. Kunci ke commit yang benar-benar dibangun.
           gh release create "$TAG" "$ZIP" \
             --title "$TAG" --notes-file /tmp/notes.md --target "$GITHUB_SHA"
+          # Dipakai step "Banding log dengan titik terbukti" sesudah ini.
+          echo "REL_TAG=$TAG" >> "$GITHUB_ENV"
           # Id numerik aset baru ada SESUDAH rilisnya terbit, dan id itulah yang
           # dipakai untuk mencetak tautan pra-tandatangan. Jadi catatannya
           # dilengkapi lalu ditambal balik dengan `gh release edit`.
@@ -5850,6 +5852,85 @@ jobs:
       # hilang bersama runner. Step ini menyimpannya supaya bisa diunduh dan
       # ditelusuri penuh. `if: failure()` -> hanya jalan saat ada step gagal,
       # jadi tidak menambah artifact di build yang sukses.
+      # ------------------------------------------------------------
+      # Banding log (pengganti logcmp yang dulu dikerjakan tangan).
+      # Ringkasan log compile - jumlah warning, error, "N warnings generated",
+      # file .rej, dan sebaran flag -W - diunggah ke rilis ini sebagai
+      # ringkasan-log.txt, lalu dibandingkan dengan ringkasan rilis titik
+      # terbukti boot terbaru (tag titik-* dari workflow "Tandai terbukti
+      # boot"). Hasilnya ditulis di badan rilis. Step ini tidak pernah
+      # menggagalkan build: zip-nya sudah terbit di step sebelumnya.
+      # ------------------------------------------------------------
+      - name: Banding log dengan titik terbukti
+        if: success() && env.REL_TAG != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          R=/tmp/ringkasan-log.txt
+          if [ ! -s /tmp/build.log ]; then
+            echo "::warning::/tmp/build.log kosong - banding log dilewati"
+            exit 0
+          fi
+          {
+            printf 'warning\t%s\n' "$(grep -c ' warning: ' /tmp/build.log)"
+            printf 'error\t%s\n' "$(grep -c ' error: ' /tmp/build.log)"
+            printf 'warnings-generated\t%s\n' \
+              "$(grep -oE '[0-9]+ warnings? generated' /tmp/build.log | awk '{s+=$1} END{print s+0}')"
+            printf 'rej\t%s\n' "$(find kernel/patch_rejects -name '*.rej' 2>/dev/null | wc -l)"
+            grep -oE '\[-W[A-Za-z0-9_=+-]+\]' /tmp/build.log | sort | uniq -c |
+              awk '{printf "flag %s\t%s\n", $2, $1}'
+          } | LC_ALL=C sort > "$R"
+          gh release upload "$REL_TAG" "$R" --clobber ||
+            echo "::warning::gagal mengunggah ringkasan-log.txt ke $REL_TAG"
+
+          TITIK=$(gh api "repos/${GH_REPO}/git/matching-refs/tags/titik-" --jq '.[].ref' 2>/dev/null |
+                    sed 's#^refs/tags/##' | grep -E '^titik-[0-9]{8}-[0-9]{6}$' | LC_ALL=C sort | tail -n1 || true)
+          {
+            printf '\n### Banding log dengan titik terbukti boot\n\n'
+            if [ -z "$TITIK" ]; then
+              printf 'Belum ada titik terbukti boot (tag `titik-*`). Kalau rilis ini\n'
+              printf 'sudah diflash dan HP boot normal, jalankan workflow\n'
+              printf '**Tandai terbukti boot** dengan tag `%s`.\n' "$REL_TAG"
+            elif ! gh release download "build-${TITIK#titik-}" -p ringkasan-log.txt \
+                   -O /tmp/titik.txt --clobber 2>/dev/null; then
+              printf 'Rilis titik `build-%s` tidak punya `ringkasan-log.txt` (dibangun\n' "${TITIK#titik-}"
+              printf 'sebelum fitur ini ada), jadi belum bisa dibandingkan.\n'
+            else
+              cut -f1 /tmp/titik.txt "$R" | LC_ALL=C sort -u > /tmp/kunci
+              total=0; sama=0; baris=""
+              while IFS= read -r k; do
+                [ -n "$k" ] || continue
+                lama=$(awk -F'\t' -v k="$k" '$1==k {print $2}' /tmp/titik.txt); lama=${lama:-0}
+                baru=$(awk -F'\t' -v k="$k" '$1==k {print $2}' "$R"); baru=${baru:-0}
+                total=$((total + 1))
+                if [ "$lama" = "$baru" ]; then sama=$((sama + 1)); continue; fi
+                if [ "$baru" -gt "$lama" ]; then v='**NAIK**'; else v='turun'; fi
+                baris="${baris}| \`${k}\` | ${lama} | ${baru} | ${v} |"$'\n'
+              done < /tmp/kunci
+              printf 'Pembanding: `%s` (rilis `build-%s`).\n\n' "$TITIK" "${TITIK#titik-}"
+              if [ -z "$baris" ]; then
+                printf '**SAMA** - %s dari %s bagian identik. Log compile tidak berubah\n' "$sama" "$total"
+                printf 'dibanding titik yang terbukti boot.\n'
+              else
+                printf '%s dari %s bagian sama. Yang berbeda:\n\n' "$sama" "$total"
+                printf '| bagian | titik | rilis ini | vonis |\n|---|---:|---:|---|\n'
+                printf '%s' "$baris"
+                printf '\nWarning yang naik belum tentu berbahaya. `error` atau `rej` yang\n'
+                printf 'naik: baca log run ini sebelum flash, dan siapkan zip titik untuk\n'
+                printf 'jaga-jaga (lihat PANDUAN.md bagian "Pulih dari bootloop").\n'
+              fi
+            fi
+          } > /tmp/banding.md
+          cat /tmp/banding.md >> "$GITHUB_STEP_SUMMARY"
+          if gh release view "$REL_TAG" --json body --jq .body > /tmp/body.md; then
+            cat /tmp/banding.md >> /tmp/body.md
+            gh release edit "$REL_TAG" --notes-file /tmp/body.md ||
+              echo "::warning::gagal menulis hasil banding ke badan rilis"
+          fi
+
       - name: Upload log build lengkap (hanya saat gagal)
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -5861,3 +5942,113 @@ jobs:
             /tmp/build.log
             kernel/out/.config
             kernel/patch_rejects/
+
+  # ============================================================
+  # Arsip source yang di-pin.
+  #
+  # Pelajaran berkali-kali (BakaSU/xxKSU me-rebase, NoMount dev ditulis
+  # ulang): commit yang di-pin bisa lepas dari branch upstream dan suatu
+  # hari hilang. Sesudah build hijau, job ini menyimpan source setiap pin
+  # ke satu rilis tetap bernama `arsip-sumber` (prerelease, tidak pernah
+  # jadi Latest, tidak disentuh workflow "Bersihkan"). Nama aset memuat
+  # SHA, jadi tiap SHA cuma diunggah sekali.
+  #
+  #   KSU   -> <nama>-<sha12>.bundle  (git bundle riwayat PENUH: KSU_VERSION
+  #            dihitung dari rev-list --count, tarball tidak cukup)
+  #   lain  -> <nama>-<sha12>.tar.gz  (tarball codeload GitHub)
+  #   proton-clang tidak diarsip (besar, repo kdrag0n sudah beku).
+  #
+  # Cara memakainya saat upstream hilang: lihat PANDUAN.md bagian
+  # "Upstream hilang". Job ini tidak pernah membuat rilis kernel gagal:
+  # kalau satu pin gagal diarsip, ia memberi peringatan kuning dan lanjut.
+  # ============================================================
+  arsip:
+    needs: build
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Arsipkan source setiap pin ke rilis arsip-sumber
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          REL=arsip-sumber
+          if ! gh release view "$REL" >/dev/null 2>&1; then
+            printf '%s\n' \
+              'Source setiap pin yang pernah dibangun hijau, diunggah otomatis oleh job' \
+              '`arsip` di workflow build. Nama aset = komponen + 12 huruf awal SHA.' \
+              '' \
+              '- `ksu-*.bundle`: git bundle riwayat penuh (`git clone <bundle>`).' \
+              '- `*.tar.gz`: tarball source pada SHA itu.' \
+              '' \
+              'Jangan hapus rilis ini. Cara memakainya ada di PANDUAN.md.' > /tmp/arsip-notes.md
+            gh release create "$REL" --prerelease --latest=false \
+              --title "Arsip source ter-pin (jangan dihapus)" \
+              --notes-file /tmp/arsip-notes.md --target "$GITHUB_SHA" || {
+                echo "::warning::gagal membuat rilis $REL - arsip dilewati"; exit 0; }
+          fi
+          ADA=$(gh release view "$REL" --json assets --jq '.assets[].name' 2>/dev/null || true)
+          mkdir -p /tmp/arsip
+          gagal=0
+          {
+            printf '## Arsip source\n\n| pin | SHA | aset | hasil |\n|---|---|---|---|\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+          while IFS=';' read -r VAR REPO NAMA; do
+            SHA=$(tr -d '\r' < pins.env | grep -E "^${VAR}=[0-9a-f]{40}$" | cut -d= -f2 | head -n1)
+            if [ -z "$SHA" ]; then
+              echo "::warning::$VAR tidak terbaca dari pins.env"; gagal=1; continue
+            fi
+            if [ "$NAMA" = ksu ]; then ASET="${NAMA}-${SHA:0:12}.bundle"; else ASET="${NAMA}-${SHA:0:12}.tar.gz"; fi
+            if printf '%s\n' "$ADA" | grep -qxF "$ASET"; then
+              printf '| %s | `%s` | `%s` | sudah ada |\n' "$VAR" "${SHA:0:9}" "$ASET" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            F="/tmp/arsip/$ASET"
+            ok=0
+            if [ "$NAMA" = ksu ]; then
+              rm -rf /tmp/ksu.git
+              if git clone -q --bare "https://github.com/${REPO}.git" /tmp/ksu.git; then
+                git -C /tmp/ksu.git cat-file -e "${SHA}^{commit}" 2>/dev/null ||
+                  git -C /tmp/ksu.git fetch -q origin "$SHA" || true
+                if git -C /tmp/ksu.git cat-file -e "${SHA}^{commit}" 2>/dev/null &&
+                   git -C /tmp/ksu.git update-ref refs/heads/pin "$SHA" &&
+                   git -C /tmp/ksu.git bundle create "$F" refs/heads/pin &&
+                   git -C /tmp/ksu.git bundle verify "$F" >/dev/null 2>&1; then
+                  ok=1
+                  echo "$VAR: bundle $(git -C /tmp/ksu.git rev-list --count "$SHA") commit"
+                fi
+              fi
+              rm -rf /tmp/ksu.git
+            else
+              if curl -fsSL --retry 3 -o "$F" "https://codeload.github.com/${REPO}/tar.gz/${SHA}" &&
+                 tar -tzf "$F" >/dev/null 2>&1; then
+                ok=1
+              fi
+            fi
+            if [ "$ok" = 1 ] && gh release upload "$REL" "$F"; then
+              printf '| %s | `%s` | `%s` | **diunggah** (%s byte) |\n' "$VAR" "${SHA:0:9}" "$ASET" "$(stat -c %s "$F")" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::$VAR ${SHA:0:9} dari $REPO gagal diarsip"
+              printf '| %s | `%s` | `%s` | **GAGAL** |\n' "$VAR" "${SHA:0:9}" "$ASET" >> "$GITHUB_STEP_SUMMARY"
+              gagal=1
+            fi
+            rm -f "$F"
+          done <<'DAFTAR'
+          KERNEL_PIN;dlagia/android_kernel_xiaomi_rosemary;kernel
+          KSU_PIN;Baka-SU/BakaSU;ksu
+          SUSFS_PIN;JackA1ltman/NonGKI_Kernel_Build_2nd;susfs
+          NOMOUNT_PIN;maxsteeel/nomount;nomount
+          NOMOUNT_LOADER_PIN;maxsteeel/nomount;nomount-loader
+          AK3_PIN;vlxlxlv/AnyKernel3;ak3
+          SCRIPTS_PIN;dlagia/Build-Kernel_scripts;scripts
+          DAFTAR
+          if [ "$gagal" = 1 ]; then
+            printf '\nAda pin yang gagal diarsip - lihat peringatan kuning di atas.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 0

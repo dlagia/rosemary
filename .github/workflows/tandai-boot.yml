@@ -1,0 +1,96 @@
+# ============================================================
+# Tandai terbukti boot - tombol.
+#
+# Tekan SESUDAH zip sebuah rilis diflash dan HP boot normal. Ia:
+#   1. membuat tag `titik-YYYYMMDD-HHMMSS` di commit rilis itu
+#      (tag inilah "titik" yang dipakai rollback dan banding log);
+#   2. mengganti judul rilis menjadi "TERBUKTI BOOT - build-...";
+#   3. menulis tanggal + catatan Anda di paling atas badan rilis.
+#
+# Rilis yang punya tag titik-* tidak pernah dihapus workflow "Bersihkan".
+# Dulu pekerjaan ini = menyunting komentar riwayat titik di pins.env
+# dengan tangan; sekarang cukup tombol ini.
+#
+# Aman ditekan dua kali: tag yang sudah ada dibiarkan, judul tidak dobel.
+# ============================================================
+name: Tandai terbukti boot
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag rilis yang sudah diflash dan boot normal (build-YYYYMMDD-HHMMSS). Kosong = rilis Latest'
+        required: false
+        type: string
+        default: ''
+      catatan:
+        description: 'Catatan singkat (opsional), mis. "uji 2 hari, Duck Detector bersih"'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tandai-boot
+  cancel-in-progress: false
+
+jobs:
+  tandai:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Tandai rilis sebagai titik terbukti boot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_IN: ${{ inputs.tag }}
+          CATATAN: ${{ inputs.catatan }}
+        run: |
+          set -euo pipefail
+          TAG="$(printf '%s' "$TAG_IN" | tr -d '[:space:]')"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh api "repos/${GH_REPO}/releases/latest" --jq .tag_name)
+            echo "Input kosong - memakai rilis Latest: $TAG"
+          fi
+          printf '%s' "$TAG" | grep -qxE 'build-[0-9]{8}-[0-9]{6}' || {
+            echo "::error::Tag '$TAG' bukan bentuk build-YYYYMMDD-HHMMSS"; exit 1; }
+          gh release view "$TAG" >/dev/null || {
+            echo "::error::Rilis $TAG tidak ada di repo ini"; exit 1; }
+
+          SHA=$(gh api "repos/${GH_REPO}/git/ref/tags/${TAG}" --jq 'select(.object.type=="commit") | .object.sha')
+          printf '%s' "$SHA" | grep -qxE '[0-9a-f]{40}' || {
+            echo "::error::commit di balik tag $TAG tidak terbaca"; exit 1; }
+
+          TITIK="titik-${TAG#build-}"
+          if gh api "repos/${GH_REPO}/git/ref/tags/${TITIK}" >/dev/null 2>&1; then
+            echo "Tag $TITIK sudah ada - dibiarkan."
+          else
+            gh api "repos/${GH_REPO}/git/refs" -f ref="refs/tags/${TITIK}" -f sha="$SHA" >/dev/null
+            echo "Tag $TITIK dibuat di ${SHA:0:9}."
+          fi
+
+          JUDUL="TERBUKTI BOOT - $TAG"
+          BODY=$(gh release view "$TAG" --json body --jq .body)
+          if printf '%s' "$BODY" | head -n1 | grep -q '^\*\*TERBUKTI BOOT\*\*'; then
+            echo "Badan rilis sudah bertanda - tidak ditulis ulang."
+            printf '%s\n' "$BODY" > /tmp/body.md
+          else
+            {
+              printf '**TERBUKTI BOOT** - dikonfirmasi @%s pada %s (WIB), tag `%s`.\n' \
+                "$GITHUB_ACTOR" "$(TZ=Asia/Jakarta date '+%Y-%m-%d %H:%M')" "$TITIK"
+              if [ -n "$CATATAN" ]; then printf '\nCatatan: %s\n' "$CATATAN"; fi
+              printf '\n---\n\n%s\n' "$BODY"
+            } > /tmp/body.md
+          fi
+          gh release edit "$TAG" --title "$JUDUL" --notes-file /tmp/body.md
+
+          SEMUA=$(gh api "repos/${GH_REPO}/git/matching-refs/tags/titik-" --jq '.[].ref' |
+                    sed 's#^refs/tags/##' | LC_ALL=C sort -r)
+          {
+            printf '## Titik terbukti boot\n\n'
+            printf -- '- **%s** = rilis `%s`, commit `%s`\n\n' "$TITIK" "$TAG" "${SHA:0:9}"
+            printf 'Rantai titik (terbaru di atas; nomor 2 = jaring kedua):\n\n'
+            printf '%s\n' "$SEMUA" | awk 'NF {printf "%d. `%s`\n", NR, $0}'
+          } >> "$GITHUB_STEP_SUMMARY"

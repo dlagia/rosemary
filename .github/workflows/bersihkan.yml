@@ -1,0 +1,97 @@
+# ============================================================
+# Bersihkan - rilis uji lama + cache ccache basi.
+#
+# Jalan sendiri tiap Minggu, atau ditekan tangan (centang "coba" untuk
+# melihat daftar tanpa menghapus apa pun).
+#
+# Rilis build-* DIHAPUS (beserta tag-nya) hanya kalau KETIGA syarat ini
+# benar sekaligus:
+#   1. tidak punya tag titik-* (belum ditandai terbukti boot);
+#   2. bukan salah satu dari SIMPAN rilis build-* terbaru (rilis terbaru
+#      juga basis gerbang build, jadi tidak boleh hilang);
+#   3. umurnya lebih dari UMUR hari.
+# Rilis selain build-* (mis. `arsip-sumber`) tidak pernah disentuh.
+#
+# Cache: hanya entri ccache-rosemary-* yang paling baru disimpan (build
+# memakai restore-keys awalan, jadi entri lain tidak terpakai lagi).
+# Cache proton-clang tidak disentuh.
+# ============================================================
+name: Bersihkan
+
+on:
+  schedule:
+    - cron: '41 2 * * 0'   # Minggu 09:41 WIB
+  workflow_dispatch:
+    inputs:
+      coba:
+        description: 'Coba saja: tampilkan yang akan dihapus, tanpa menghapus'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: bersihkan
+  cancel-in-progress: false
+
+env:
+  SIMPAN: '3'
+  UMUR: '14'
+
+jobs:
+  bersih:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Hapus rilis uji lama dan cache basi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COBA: ${{ inputs.coba || 'false' }}
+        run: |
+          set -euo pipefail
+          TITIK=$(gh api "repos/${GH_REPO}/git/matching-refs/tags/titik-" --jq '.[].ref' |
+                    sed 's#^refs/tags/titik-##')
+          # Semua rilis build-*, terbaru dulu (nama memuat waktu UTC, jadi urut nama = urut waktu).
+          gh api --paginate "repos/${GH_REPO}/releases?per_page=100" --jq '.[].tag_name' |
+            grep -xE 'build-[0-9]{8}-[0-9]{6}' | LC_ALL=C sort -r > /tmp/rilis || true
+          BATAS=$(date -u -d "${UMUR} days ago" +%Y%m%d%H%M%S)
+          n=0; hapus=0; simpan=0
+          {
+            printf '## Bersihkan%s\n\n' "$([ "$COBA" = true ] && echo ' (COBA - tidak ada yang dihapus)')"
+            printf '| rilis | keputusan |\n|---|---|\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+          while IFS= read -r TAG; do
+            [ -n "$TAG" ] || continue
+            n=$((n + 1)); STAMP="${TAG#build-}"
+            if printf '%s\n' "$TITIK" | grep -qxF "$STAMP"; then
+              alasan="simpan: titik terbukti boot"
+            elif [ "$n" -le "$SIMPAN" ]; then
+              alasan="simpan: ${SIMPAN} terbaru"
+            elif [ "${STAMP//-/}" -gt "$BATAS" ]; then
+              alasan="simpan: umur < ${UMUR} hari"
+            else
+              alasan="HAPUS"
+            fi
+            if [ "$alasan" = HAPUS ]; then
+              hapus=$((hapus + 1))
+              [ "$COBA" = true ] || gh release delete "$TAG" --cleanup-tag --yes
+            else
+              simpan=$((simpan + 1))
+            fi
+            printf '| `%s` | %s |\n' "$TAG" "$alasan" >> "$GITHUB_STEP_SUMMARY"
+          done < /tmp/rilis
+          printf '\nRilis: %s disimpan, %s dihapus.\n\n' "$simpan" "$hapus" >> "$GITHUB_STEP_SUMMARY"
+
+          gh cache list --key ccache-rosemary- --sort created_at --order desc \
+            --limit 100 --json id,key --jq '.[] | "\(.id) \(.key)"' > /tmp/cache || true
+          c=0
+          while read -r ID KEY; do
+            [ -n "${ID:-}" ] || continue
+            c=$((c + 1))
+            [ "$c" = 1 ] && { printf 'Cache disimpan: `%s`\n' "$KEY" >> "$GITHUB_STEP_SUMMARY"; continue; }
+            [ "$COBA" = true ] || gh cache delete "$ID"
+            printf 'Cache dihapus: `%s`\n' "$KEY" >> "$GITHUB_STEP_SUMMARY"
+          done < /tmp/cache

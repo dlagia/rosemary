@@ -1,0 +1,123 @@
+# ============================================================
+# Kembali ke titik - tombol rollback.
+#
+# Dipakai kalau kernel baru bermasalah (bootloop, app rusak, deteksi).
+#
+#   1. Mencetak tautan zip titik yang dipilih -> itulah yang diflash
+#      lewat TWRP. Tidak perlu build ulang: zip-nya sudah ada di rilis.
+#   2. Mengembalikan pins.env ke isi pins.env di commit titik itu, supaya
+#      kenaikan pin berikutnya mulai lagi dari keadaan yang terbukti boot.
+#   3. (opsional) memanggil build ulang - hanya kalau workflow build di
+#      main masih sama dengan di titik itu. Kalau berbeda, hasil build
+#      ulang BUKAN kernel titik itu, jadi tombol ini menolak dan mencetak
+#      perintah git untuk dijalankan di PC (GITHUB_TOKEN dilarang menulis
+#      file di bawah .github/workflows/).
+#
+# Titik = tag titik-* yang dibuat workflow "Tandai terbukti boot".
+# ============================================================
+name: Kembali ke titik
+
+on:
+  workflow_dispatch:
+    inputs:
+      titik:
+        description: 'Tag titik (titik-YYYYMMDD-HHMMSS). Kosong = titik terbaru, "2" = jaring kedua, "3" = ketiga'
+        required: false
+        type: string
+        default: ''
+      bangun:
+        description: 'Bangun ulang sesudah pins.env dikembalikan (biasanya TIDAK perlu: zip titik sudah ada)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: naikkan-pin
+  cancel-in-progress: false
+
+jobs:
+  kembali:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Pilih titik dan kembalikan pins.env
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TITIK_IN: ${{ inputs.titik }}
+          BANGUN: ${{ inputs.bangun }}
+        run: |
+          set -euo pipefail
+          git fetch -q --tags --force origin
+          SEMUA=$(git tag -l 'titik-*' | grep -E '^titik-[0-9]{8}-[0-9]{6}$' | LC_ALL=C sort -r || true)
+          [ -n "$SEMUA" ] || { echo "::error::Belum ada satu pun tag titik-*. Tandai dulu rilis yang terbukti boot."; exit 1; }
+          IN="$(printf '%s' "$TITIK_IN" | tr -d '[:space:]')"
+          case "$IN" in
+            '') TITIK=$(printf '%s\n' "$SEMUA" | sed -n 1p) ;;
+            [0-9]|[0-9][0-9]) TITIK=$(printf '%s\n' "$SEMUA" | sed -n "${IN}p") ;;
+            *) TITIK="$IN" ;;
+          esac
+          printf '%s\n' "$SEMUA" | grep -qxF "${TITIK:-x}" || {
+            echo "::error::Titik '${IN}' tidak ada. Yang tersedia:"; printf '%s\n' "$SEMUA"; exit 1; }
+          REL="build-${TITIK#titik-}"
+          SHA=$(git rev-parse "${TITIK}^{commit}")
+          ZIP_URL=$(gh release view "$REL" --json assets --jq '.assets[] | select(.name | endswith(".zip")) | .url' | head -n1 || true)
+
+          {
+            printf '## Kembali ke %s\n\n' "$TITIK"
+            printf '### 1. Flash ini dulu\n\n'
+            if [ -n "$ZIP_URL" ]; then
+              printf 'Zip titik: %s\n\n' "$ZIP_URL"
+            else
+              printf '**Zip rilis `%s` tidak ditemukan** - cek halaman Releases.\n\n' "$REL"
+            fi
+            printf 'Boot TWRP -> Install -> pilih zip -> reboot. Langkah lengkap: PANDUAN.md\n'
+            printf 'bagian "Pulih dari bootloop".\n\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git show "${SHA}:pins.env" > pins.env
+          if git diff --quiet -- pins.env; then
+            printf '### 2. pins.env\n\nSudah sama dengan %s - tidak ada commit.\n\n' "$TITIK" >> "$GITHUB_STEP_SUMMARY"
+            BERUBAH=0
+          else
+            git add pins.env
+            git commit -q -m "pins: kembali ke ${TITIK} (${SHA:0:9})" \
+              -m "Lewat workflow \"Kembali ke titik\" oleh @${GITHUB_ACTOR}."
+            git push -q origin "HEAD:${GITHUB_REF_NAME}"
+            printf '### 2. pins.env\n\nDikembalikan ke isi %s (commit `%s`).\n\n' "$TITIK" "$(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"
+            BERUBAH=1
+          fi
+
+          WF=.github/workflows/build-kernel-ksu-v2.yml
+          if git diff --quiet "$SHA" HEAD -- "$WF"; then WF_SAMA=1; else WF_SAMA=0; fi
+          {
+            printf '### 3. Workflow build\n\n'
+            if [ "$WF_SAMA" = 1 ]; then
+              printf 'Sama dengan di %s - build ulang akan menghasilkan kernel titik itu.\n' "$TITIK"
+            else
+              printf '**Berbeda** dari %s. Build ulang sekarang BUKAN kernel titik itu.\n' "$TITIK"
+              printf 'Kalau memang ingin workflow-nya ikut mundur, jalankan di PC (folder repo):\n\n'
+              printf '```\ngit pull\ngit checkout %s -- %s\ngit commit -m "build: kembali ke %s"\ngit push\n```\n' "$TITIK" "$WF" "$TITIK"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$BANGUN" = true ]; then
+            if [ "$WF_SAMA" = 1 ]; then
+              gh workflow run build-kernel-ksu-v2.yml --ref "$GITHUB_REF_NAME"
+              printf '\nBuild ulang dipanggil.\n' >> "$GITHUB_STEP_SUMMARY"
+            else
+              printf '\nBuild ulang **tidak** dipanggil karena workflow build berbeda (lihat di atas).\n' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          if [ "$BERUBAH" = 1 ]; then
+            gh workflow run pin-watch.yml --ref "$GITHUB_REF_NAME" || true
+          fi
