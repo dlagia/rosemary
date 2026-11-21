@@ -4,7 +4,7 @@
 # Ia HANYA jalan kalau Anda menekannya (workflow_dispatch). Tidak ada jadwal,
 # tidak pernah menaikkan apa pun sendiri. Pasangannya:
 #
-#   pin-watch.yml   -> MEMBACA & memvonis  ("SUSFS gerak, vonis AMAN")
+#   pin-watch.yml   -> MEMBACA & memvonis  ("NoMount gerak, vonis AMAN")
 #   naikkan-pin.yml -> MENULIS pins.env    (ini)
 #   build-...yml    -> MENG-COMPILE
 #
@@ -14,8 +14,8 @@
 #
 # PENGAMAN YANG PALING PENTING ada di step "Triase": sebelum menulis apa pun, ia
 # membandingkan pin lama dengan tujuan dan menolak kalau ada file sensitif yang
-# tersentuh (source kernel mana pun, patch SUSFS, kernel/src/, userspace/src/ NoMount,
-# META-INF/ AnyKernel3, ...). Jadi tombol ini
+# tersentuh (source kernel mana pun, kernel/ xxKSU, kernel/src/ dan
+# userspace/src/ NoMount, META-INF/ AnyKernel3, ...). Jadi tombol ini
 # tidak bisa dipakai untuk diam-diam menaikkan sesuatu yang seharusnya diaudit
 # dulu - kecuali Anda sendiri mencentang "paksa" dan menyatakan sudah paham.
 # ============================================================
@@ -29,14 +29,13 @@ on:
         required: true
         type: choice
         options:
-          - 'SUSFS'
-          - 'BakaSU'
+          - 'xxKSU'
           - 'NoMount driver'
           - 'NoMount loader'
           - 'source kernel'
-          - 'Build-Kernel_scripts'
           - 'AnyKernel3'
           - 'proton-clang'
+          - 'fgetpriority'
       sha:
         description: 'SHA tujuan - kosongkan untuk memakai HEAD upstream'
         required: false
@@ -92,13 +91,13 @@ jobs:
           # nama 2026-10-14), sama dengan kolom nama KOMPONEN di pin-watch.yml.
           case "$KOMPONEN" in
             'source kernel')         BARIS='KERNEL_PIN;dlagia/android_kernel_xiaomi_rosemary;rosemary-13;.' ;;
-            'Build-Kernel_scripts')  BARIS='SCRIPTS_PIN;dlagia/Build-Kernel_scripts;main;.' ;;
-            'BakaSU')                BARIS='KSU_PIN;Baka-SU/BakaSU;main;^kernel/' ;;
-            'SUSFS')                 BARIS='SUSFS_PIN;JackA1ltman/NonGKI_Kernel_Build_2nd;mainline;(susfs_patch_to_4\.14\.patch|^scripts/|hook)' ;;
+            # Revisi ke-118: BakaSU -> xxKSU; SUSFS dan Build-Kernel_scripts dicabut.
+            'xxKSU')                 BARIS='KSU_PIN;backslashxx/KernelSU;master;^kernel/' ;;
             'NoMount driver')        BARIS='NOMOUNT_PIN;maxsteeel/nomount;dev;^(kernel/src/|userspace/src/)' ;;
             'NoMount loader')        BARIS='NOMOUNT_LOADER_PIN;maxsteeel/nomount;master;^kernel/setup\.sh' ;;
             'proton-clang')          BARIS='CLANG_PIN;kdrag0n/proton-clang;master;.' ;;
             'AnyKernel3')            BARIS='AK3_PIN;vlxlxlv/AnyKernel3;mt6781;^(tools/|META-INF/|ramdisk/)' ;;
+            'fgetpriority')          BARIS='FGETPRIORITY_PIN;aerath-stuff/fgetpriority;master;^kernel/' ;;
             *) echo "ERROR: komponen tak dikenal: $KOMPONEN"; exit 1 ;;
           esac
           IFS=';' read -r NAMA REPO REF SENSITIF <<< "$BARIS"

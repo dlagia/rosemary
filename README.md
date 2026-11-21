@@ -1,7 +1,11 @@
 # rosemary
 
-Kernel Xiaomi rosemary (Redmi Note 10S, Linux 4.14) dengan KernelSU (BakaSU)
-+ SUSFS + NoMount, dibangun otomatis oleh GitHub Actions.
+Kernel Xiaomi rosemary (Redmi Note 10S, Linux 4.14) dengan xxKSU
+(backslashxx/KernelSU) + NoMount + fgetpriority, `uname -r` = `4.14.186-perf`
+(sama dengan kernel stok), dibangun otomatis oleh GitHub Actions.
+
+- Manager: APK dari rilis [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU/releases).
+  Manager BakaSU tidak dikenali kernel ini.
 
 - Zip siap flash: halaman **Releases**. Yang berjudul `TERBUKTI BOOT - ...`
   sudah diuji di HP.

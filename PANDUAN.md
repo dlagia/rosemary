@@ -1,7 +1,9 @@
 # Panduan dlagia/rosemary
 
 Kernel Xiaomi rosemary (Redmi Note 10S, MT6785, Linux 4.14) dengan
-KernelSU (BakaSU) + SUSFS + NoMount, dibangun otomatis oleh GitHub Actions.
+xxKSU (backslashxx/KernelSU) + NoMount + fgetpriority, dibangun otomatis
+oleh GitHub Actions. `uname -r` = `4.14.186-perf`, sama dengan kernel stok
+(step "Samakan SUBLEVEL dengan versi stok").
 Panduan ini ditulis supaya semua pekerjaan rutin bisa dikerjakan sendiri,
 tanpa bantuan AI.
 
@@ -12,7 +14,7 @@ Semua tombol ada di tab **Actions**. Pilih workflow di kiri, tekan
 
 | berkas | gunanya |
 |---|---|
-| `pins.env` | 8 baris `NAMA_PIN=<SHA 40 huruf>`: versi persis tiap komponen. Ini satu-satunya yang biasanya diubah. |
+| `pins.env` | 7 baris `NAMA_PIN=<SHA 40 huruf>`: versi persis tiap komponen. Ini satu-satunya yang biasanya diubah. |
 | `.github/workflows/build-kernel-ksu-v2.yml` | resep build kernel |
 | `.github/workflows/pin-watch.yml` | robot pemantau upstream (tiap hari) |
 | `.github/workflows/naikkan-pin.yml` | tombol menaikkan pin |
@@ -25,13 +27,23 @@ Komponen yang di-pin:
 | pin | repo upstream | branch |
 |---|---|---|
 | `KERNEL_PIN` | dlagia/android_kernel_xiaomi_rosemary | rosemary-13 |
-| `KSU_PIN` | Baka-SU/BakaSU | main |
-| `SUSFS_PIN` | JackA1ltman/NonGKI_Kernel_Build_2nd | mainline |
+| `KSU_PIN` | backslashxx/KernelSU (xxKSU) | master |
 | `NOMOUNT_PIN` | maxsteeel/nomount | dev |
 | `NOMOUNT_LOADER_PIN` | maxsteeel/nomount | master |
 | `AK3_PIN` | vlxlxlv/AnyKernel3 | mt6781 |
-| `SCRIPTS_PIN` | dlagia/Build-Kernel_scripts | main |
+| `FGETPRIORITY_PIN` | aerath-stuff/fgetpriority | master |
 | `CLANG_PIN` | kdrag0n/proton-clang | master |
+
+SUSFS tidak ada: xxKSU tidak mendukungnya. Modul yang butuh SUSFS
+kehilangan fitur kernelnya.
+
+## Manager
+
+Pasang APK manager dari halaman rilis
+[backslashxx/KernelSU](https://github.com/backslashxx/KernelSU/releases)
+(paket `me.weishu.kernelsu`). Manager BakaSU atau KernelSU resmi tidak
+dikenali kernel ini. Pasang APK-nya SEBELUM flash zip pertama dari repo ini,
+supaya sesudah boot manager langsung jalan.
 
 ## Istilah
 
@@ -125,12 +137,12 @@ HP tidak lewat logo, atau restart terus:
 Tidak ada rilis yang terbit, jadi HP tidak terancam. Buka run yang merah,
 klik step yang bertanda X:
 
-- **Muat pins.env**: format pins.env rusak. Harus 8 baris
+- **Muat pins.env**: format pins.env rusak. Harus 7 baris
   `NAMA_PIN=<40 huruf 0-9a-f>`, tanpa spasi.
 - **Clone / fetch gagal, `not our ref`, `couldn't find remote ref`**: commit
   hilang di upstream (lihat "Upstream hilang"), atau GitHub sedang gangguan
   (tekan *Re-run jobs*).
-- **Assert / `ERROR: ...` di step patch (SUSFS, NoMount, BakaSU)**: upstream
+- **Assert / `ERROR: ...` di step integrasi (xxKSU, NoMount, fgetpriority, SUBLEVEL)**: upstream
   mengubah bentuk kode yang ditambal workflow ini. Paling aman:
   **Kembali ke titik**, lalu tunggu upstream stabil, atau naikkan komponen
   lain dulu.
@@ -145,19 +157,22 @@ Setiap build hijau mengarsipkan source semua pin ke rilis **arsip-sumber**
 
 Kalau upstream sebuah komponen hilang:
 
-1. Buat repo baru di akun Anda (mis. `dlagia/BakaSU`).
+1. Buat repo baru di akun Anda (mis. `dlagia/KernelSU`).
 2. Unduh asetnya dari rilis arsip-sumber, lalu dorong ke repo baru:
    - KSU (`ksu-<sha>.bundle`):
      ```
-     git clone ksu-<sha>.bundle BakaSU
-     cd BakaSU
-     git push https://github.com/dlagia/BakaSU.git pin:main
+     git clone ksu-<sha>.bundle KernelSU
+     cd KernelSU
+     git push https://github.com/dlagia/KernelSU.git pin:master
      ```
    - Komponen lain (`*.tar.gz`): ekstrak, `git init`, `git add -A`,
      `git commit`, push. SHA-nya akan baru; pakai SHA baru itu di pins.env.
 3. Di PC, ganti nama repo lama dengan repo baru di
    `.github/workflows/build-kernel-ksu-v2.yml` (cari nama repo lamanya) dan
    di daftar `pin-watch.yml` (baris yang berisi `;nama/repo;branch;`).
+   Nama repo itu juga ada di `naikkan-pin.yml` dan di daftar job `arsip`
+   workflow build: cari nama repo lama di SEMUA berkas `.github/workflows/`
+   supaya tidak ada yang terlewat.
 4. Commit dan push (lihat "Kerja dari PC").
 
 ## Kerja dari PC
@@ -172,7 +187,7 @@ git push
 ```
 
 - Push yang mengubah `pins.env` atau workflow build memicu build otomatis.
-  Gerbang build melewati build kalau 8 SHA dan workflow-nya sama persis
+  Gerbang build melewati build kalau 7 SHA dan workflow-nya sama persis
   dengan rilis terakhir.
 - Mengubah pin dengan tangan: ganti SHA di baris `NAMA_PIN=` dengan SHA
   40 huruf dari halaman commit upstream. Tombol **Naikkan pin** melakukan
