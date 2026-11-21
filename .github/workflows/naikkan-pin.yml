@@ -1,0 +1,512 @@
+# ============================================================
+# Naikkan pin - tombol, bukan robot.
+#
+# Ia HANYA jalan kalau Anda menekannya (workflow_dispatch). Tidak ada jadwal,
+# tidak pernah menaikkan apa pun sendiri. Pasangannya:
+#
+#   pin-watch.yml   -> MEMBACA & memvonis  ("SUSFS gerak, vonis AMAN")
+#   naikkan-pin.yml -> MENULIS pins.env    (ini)
+#   build-...yml    -> MENG-COMPILE
+#
+# Kenapa pin harus tinggal di pins.env dan bukan di dalam workflow build:
+# GITHUB_TOKEN dilarang menulis file apa pun di bawah .github/workflows/, jadi
+# selama SHA tinggal di sana, tidak ada workflow yang bisa menaikkannya.
+#
+# PENGAMAN YANG PALING PENTING ada di step "Triase": sebelum menulis apa pun, ia
+# membandingkan pin lama dengan tujuan dan menolak kalau ada file sensitif yang
+# tersentuh (source kernel mana pun, patch SUSFS, kernel/src/, userspace/src/ NoMount,
+# META-INF/ AnyKernel3, ...). Jadi tombol ini
+# tidak bisa dipakai untuk diam-diam menaikkan sesuatu yang seharusnya diaudit
+# dulu - kecuali Anda sendiri mencentang "paksa" dan menyatakan sudah paham.
+# ============================================================
+name: Naikkan pin
+
+on:
+  workflow_dispatch:
+    inputs:
+      komponen:
+        description: 'Pin mana yang dinaikkan'
+        required: true
+        type: choice
+        options:
+          - 'SUSFS'
+          - 'BakaSU'
+          - 'NoMount driver'
+          - 'NoMount loader'
+          - 'source kernel'
+          - 'Build-Kernel_scripts'
+          - 'AnyKernel3'
+          - 'proton-clang'
+      sha:
+        description: 'SHA tujuan - kosongkan untuk memakai HEAD upstream'
+        required: false
+        type: string
+        default: ''
+      bangun:
+        description: 'Langsung bangun kernel setelah pin naik'
+        type: boolean
+        default: true
+      paksa:
+        description: 'PAKSA walau menyentuh file sensitif (hanya kalau sudah diaudit)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # menulis pins.env
+  actions: write    # memanggil workflow build
+
+concurrency:
+  group: naikkan-pin
+  cancel-in-progress: false
+
+jobs:
+  naikkan:
+    # Dipin 2026-10-02: label ubuntu-latest pindah ke Ubuntu 26.04 mulai
+    # 2026-10-19. Sama dengan workflow build dan rilis BRENE (24.04); naikkan
+    # bersama-sama, sesudah diuji, bukan diam-diam lewat label.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # Revisi ke-75: setiap `uses:` dipin ke SHA commit, versi rilisnya di
+      # komentar ujung baris. Tag major (v6/v7) bisa digeser pemilik repo aksi ke
+      # commit mana pun tanpa jejak di repo ini - dan aksi itu jalan dengan token
+      # job ini. Deskripsi repo menjanjikan "semua sumber dipin SHA"; sebelum
+      # revisi ini aksi GitHub satu-satunya pengecualian. preflight.sh [3/4]
+      # membandingkan SHA ini dengan rilis terbaru tiap aksi.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Triase lalu tulis pins.env
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KOMPONEN: ${{ inputs.komponen }}
+          SHA_MINTA: ${{ inputs.sha }}
+          PAKSA: ${{ inputs.paksa }}
+        run: |
+          set -euo pipefail
+
+          # Tabel ini KEMBARAN tabel KOMPONEN di pin-watch.yml - kalau satu
+          # diubah, ubah keduanya. Pemisah ';' (bukan '|') karena kolom regex
+          # jalur sensitif sendiri memakai '|' untuk alternasi.
+          # Revisi ke-93: label 'ReSukiSU' jadi 'BakaSU' (repo upstream ganti
+          # nama 2026-10-14), sama dengan kolom nama KOMPONEN di pin-watch.yml.
+          case "$KOMPONEN" in
+            'source kernel')         BARIS='KERNEL_PIN;dlagia/android_kernel_xiaomi_rosemary;rosemary-13;.' ;;
+            'Build-Kernel_scripts')  BARIS='SCRIPTS_PIN;dlagia/Build-Kernel_scripts;main;.' ;;
+            'BakaSU')                BARIS='KSU_PIN;Baka-SU/BakaSU;main;^kernel/' ;;
+            'SUSFS')                 BARIS='SUSFS_PIN;JackA1ltman/NonGKI_Kernel_Build_2nd;mainline;(susfs_patch_to_4\.14\.patch|^scripts/|hook)' ;;
+            'NoMount driver')        BARIS='NOMOUNT_PIN;maxsteeel/nomount;dev;^(kernel/src/|userspace/src/)' ;;
+            'NoMount loader')        BARIS='NOMOUNT_LOADER_PIN;maxsteeel/nomount;master;^kernel/setup\.sh' ;;
+            'proton-clang')          BARIS='CLANG_PIN;kdrag0n/proton-clang;master;.' ;;
+            'AnyKernel3')            BARIS='AK3_PIN;vlxlxlv/AnyKernel3;mt6781;^(tools/|META-INF/|ramdisk/)' ;;
+            *) echo "ERROR: komponen tak dikenal: $KOMPONEN"; exit 1 ;;
+          esac
+          IFS=';' read -r NAMA REPO REF SENSITIF <<< "$BARIS"
+
+          # Revisi ke-77: step "Muat pins.env" di build membuang CR (tr -d '\r'),
+          # jadi pins.env ber-CRLF tetap terbangun - tapi di sini setiap `$`
+          # di bawah gagal cocok dan tombol ini berhenti dengan "muncul 0 kali",
+          # keluhan tentang karakter yang tak kelihatan. Sebut sebab aslinya.
+          # Tidak dinormalkan di tempat: itu mengubah semua baris dan penjaga
+          # `git diff --numstat` = 1/1 di bawah memang harus menolaknya.
+          # Dihitung lewat tr, bukan `grep $'\r'`: grep Git-for-Windows membuang
+          # CR sendiri, jadi uji lokal penjaga ini selalu lolos.
+          if [ "$(tr -d '\r' < pins.env | wc -c)" != "$(wc -c < pins.env)" ]; then
+            echo "ERROR: pins.env berakhiran CRLF. Normalkan ke LF (mis. lewat push.sh)"
+            echo "       lalu jalankan tombol ini lagi."
+            exit 1
+          fi
+
+          # Wajib PERSIS SATU baris, bukan cuma ada. Nama ganda membuat $LAMA
+          # berisi dua SHA berbaris dua, dan sed di bawah tidak akan cocok -
+          # gagal, tapi dengan pesan yang menyesatkan. Penjaga yang sama sudah
+          # dipasang di step pemuat build dan di preflight.sh pada revisi ke-33;
+          # penulisnya sendiri justru terlewat waktu itu.
+          N_LAMA="$(grep -cE "^${NAMA}=[0-9a-f]{40}$" pins.env || true)"
+          test "$N_LAMA" = "1" || {
+            echo "ERROR: $NAMA muncul $N_LAMA kali di pins.env (wajib persis 1)"
+            exit 1
+          }
+          LAMA="$(grep -oE "^${NAMA}=[0-9a-f]{40}$" pins.env | cut -d= -f2)"
+
+          if [ -n "$SHA_MINTA" ]; then
+            # SHA diketik tangan: wajib 40 hex DAN benar-benar ada di repo itu.
+            echo "$SHA_MINTA" | grep -qE '^[0-9a-f]{40}$' \
+              || { echo "ERROR: '$SHA_MINTA' bukan SHA 40 hex huruf kecil"; exit 1; }
+            BARU="$(gh api "repos/$REPO/commits/$SHA_MINTA" --jq .sha 2>/dev/null || true)"
+          else
+            BARU="$(gh api "repos/$REPO/commits/$REF" --jq .sha 2>/dev/null || true)"
+          fi
+          # `gh api` menaruh BADAN error-nya (JSON 401/403/404/5xx) di STDOUT,
+          # jadi kegagalan API tidak terlihat sebagai nilai kosong maupun exit
+          # code di dalam $( ): $BARU berisi '{ "message": ... }' dan diproses
+          # terus seperti SHA. Di sini ujungnya masih gagal-aman - `git diff
+          # --numstat` tidak akan berbunyi 1/1 - tapi baru sesudah menulis
+          # sampah ke pins.env di workspace, dan dengan pesan yang menyesatkan.
+          # Penjaga yang sebenarnya karena itu adalah bentuknya. (Kembarannya di
+          # pin-watch.yml lebih ganas: di sana ia memvonis AMAN. Revisi ke-34.)
+          printf '%s' "$BARU" | grep -qE '^[0-9a-f]{40}$' || {
+            echo "ERROR: gagal mengambil SHA tujuan dari $REPO@${SHA_MINTA:-$REF}."
+            echo "       jawaban API: ${BARU:0:120}"
+            exit 1
+          }
+
+          # Revisi ke-77 - SHA DIKETIK TANGAN BOLEH DATANG DARI FORK. API
+          # `repos/<repo>/commits/<sha>` menjawab commit dari SELURUH jaringan
+          # fork, bukan cuma repo itu (dibuktikan 2026-10-03: commit
+          # reigadegr/nomount b9711ceba dijawab utuh oleh maxsteeel/nomount).
+          # Penjaga di atas cuma membuktikan "ada", jadi pin bisa mendarat di kode
+          # orang lain, dan status `diverged` di bawah sengaja tidak ditolak
+          # (itulah jalan memperbaiki ORPHAN). Laporan pin-watch besoknya baru
+          # memvonis ORPHAN - sesudah build-nya jalan. Syaratnya sekarang: SHA
+          # tujuan TERKANDUNG di cabang $REF (ahead/identical, behind_by 0).
+          # Rollback ke SHA lama di cabang yang sama tetap lolos; sisanya
+          # perlu `paksa`.
+          if [ -n "$SHA_MINTA" ]; then
+            CMP_CABANG="$(gh api "repos/$REPO/compare/$BARU...$REF" 2>/dev/null || true)"
+            ST_CABANG="$(echo "$CMP_CABANG" | jq -r '.status // empty' 2>/dev/null || true)"
+            MUNDUR_CABANG="$(echo "$CMP_CABANG" | jq -r '.behind_by // empty' 2>/dev/null || true)"
+            if { [ "$ST_CABANG" = "ahead" ] || [ "$ST_CABANG" = "identical" ]; } \
+               && [ "$MUNDUR_CABANG" = "0" ]; then
+              echo "cabang   : $BARU terkandung di $REPO@$REF ($ST_CABANG)"
+            elif [ "$PAKSA" != "true" ]; then
+              echo ""
+              echo "DITOLAK: $BARU TIDAK terkandung di cabang $REPO@$REF"
+              echo "  (status '${ST_CABANG:-tak terbaca}', behind_by '${MUNDUR_CABANG:-?}')."
+              echo "Commit dari fork atau dari cabang lain dijawab API seolah milik repo ini;"
+              echo "pin ke sana langsung jadi ORPHAN dan membawa kode yang tidak diaudit."
+              echo "Kalau memang disengaja dan sudah diaudit, jalankan ulang dengan paksa = true."
+              exit 1
+            else
+              echo "PAKSA aktif - $BARU tidak terkandung di $REF (status '${ST_CABANG:-tak terbaca}'), diteruskan."
+            fi
+          fi
+
+          # Revisi ke-39 - TOMBOL INI BUTA TERHADAP `# TAHAN`, dan itu lubang
+          # kelas revisi ke-38 satu tingkat lebih dalam. Revisi ke-38 menutup
+          # pintu "salin-tempel baris pins.env dari laporan" supaya kenaikan
+          # yang divonis PERLU AUDIT tidak bisa lewat tanpa triase. Tapi
+          # penulis pins.env yang sah - tombol ini - tidak pernah membaca
+          # catatan audit yang justru disimpan DI DALAM pins.env. Hari ini
+          # baris "# TAHAN SUSFS f15603b24 ..." mencatat audit yang MENOLAK SHA
+          # itu (NULL-deref di __lookup_hash), dan `paksa = true` tetap akan
+          # menuliskannya. Artinya `paksa`, yang maknanya "sudah saya audit",
+          # bisa dipakai untuk menimpa audit yang sudah tercatat hasilnya.
+          #
+          # Karena itu penahanan MENOLAK TANPA PEDULI `paksa`. Jalan keluarnya
+          # bukan centang, melainkan MENGHAPUS baris `# TAHAN` - suntingan
+          # eksplisit yang tercatat di riwayat git dan bisa ditinjau, bukan
+          # kotak yang bisa dicentang tanpa jejak alasan.
+          #
+          # Revisi ke-41 - PENAHANAN YANG KEDALUWARSA PADAHAL ALASANNYA MASIH ADA.
+          # Sampai revisi ke-40 ketiga pembaca `# TAHAN` (tombol ini, preflight.sh,
+          # pincheck) menyamakan "SHA tujuan != SHA yang ditahan" dengan "penahanan
+          # sudah kedaluwarsa". Itu benar HANYA kalau upstream membuang commit itu
+          # (rebase/force-push). Kalau upstream cuma menumpuk commit BARU di atasnya,
+          # commit yang ditolak tetap ada di dalam pohon tujuan - kodenya masih
+          # ikut terbawa - tapi penahanannya diam-diam menguap.
+          #
+          # Ini bukan hipotesis: hari ini SUSFS f15603b24 (NULL-deref di
+          # __lookup_hash) ada 10 commit DI BELAKANG mainline HEAD ac370f5de -
+          # status `ahead`, behind_by 0 - jadi gerbang di bawah ini akan melewatkan
+          # kenaikan yang membawa persis commit yang auditnya sudah menolak. Yang
+          # menyelamatkan kali ini cuma kebetulan: upstream memperbaiki sendiri
+          # urutan tiga barisnya di commit menyusul. Kebetulan bukan gerbang.
+          # Kelas yang sama dengan revisi ke-34 dan ke-39: penjaga yang berhenti
+          # menjaga dengan cara yang terbaca seperti keberhasilan.
+          #
+          # Jadi penahanan berlaku kalau SHA-nya TERKANDUNG di tujuan: sama persis,
+          # atau leluhurnya (`status` ahead/identical DAN `behind_by` = 0). Ia
+          # kedaluwarsa sendiri hanya kalau commit itu benar-benar lepas dari
+          # cabang (diverged / tak lagi bisa dibandingkan) - yaitu ketika alasannya
+          # memang ikut hilang.
+          #
+          # Kuncinya tetap SHA, bukan nama komponen: nama pendek di baris TAHAN
+          # (KERNEL/KSU/SUSFS/NMLOADER...) milik preflight.sh dan BUKAN nama di
+          # dropdown ini maupun nama variabel pins.env. Mencocokkan nama akan
+          # menjadi salinan kelima dari tabel komponen yang sama - persis cara
+          # revisi ke-28 membusuk. Baris TAHAN milik repo LAIN disaring tanpa tabel
+          # apa pun: compare-nya dijawab 404, `.status` kosong, barisnya dilewati.
+          grep -E "^# TAHAN [A-Za-z0-9_-]+ [0-9a-f]{40}([[:space:]].*)?$" pins.env \
+            > /tmp/baris_tahan.txt || true
+          TAHAN=""
+          RELASI=""
+          # Redirect, bukan pipe: `while` harus jalan di shell ini supaya TAHAN
+          # yang di-set di dalamnya masih terbaca sesudah loop.
+          while read -r BARIS_TAHAN; do
+            [ -n "$BARIS_TAHAN" ] || continue
+            SHA_TAHAN="$(printf '%s' "$BARIS_TAHAN" | grep -oE '[0-9a-f]{40}' | head -1)"
+            if [ "$SHA_TAHAN" = "$BARU" ]; then
+              TAHAN="$BARIS_TAHAN"
+              RELASI="SHA tujuan PERSIS SHA yang ditahan"
+              break
+            fi
+            CMP_TAHAN="$(gh api "repos/$REPO/compare/${SHA_TAHAN}...${BARU}" 2>/dev/null || true)"
+            ST_TAHAN="$(echo "$CMP_TAHAN" | jq -r '.status // empty' 2>/dev/null || true)"
+            # Tiga keadaan, dan HANYA yang pertama boleh berarti "lewati baris
+            # ini". $REPO sendiri sudah terbukti bisa di-compare beberapa baris
+            # di atas, jadi 404 di sini berarti SHA-nya yang tidak ada di repo
+            # ini - baris TAHAN itu menahan komponen lain. Status lain yang
+            # bukan salah satu dari empat nilai sah (403 rate limit, 5xx,
+            # jawaban kosong) berarti penahanan ini TIDAK BISA DINILAI, dan
+            # penahanan yang tidak bisa dinilai tidak boleh dianggap kedaluwarsa
+            # - itu akan jadi kegagalan yang berbunyi menenangkan untuk ketiga
+            # kalinya (revisi ke-34, ke-39, dan penjaga compare di bawah).
+            case "$ST_TAHAN" in
+              404) continue ;;
+              ahead|behind|identical|diverged) ;;
+              *)
+                echo ""
+                echo "DITOLAK: tidak bisa menilai baris penahanan berikut karena API"
+                echo "compare tidak menjawab dengan semestinya."
+                echo "  $BARIS_TAHAN"
+                echo "  status yang terbaca: '${ST_TAHAN:-(tidak ada)}'"
+                echo ""
+                echo "Penahanan yang tidak bisa diperiksa TIDAK dianggap kedaluwarsa."
+                echo "Coba lagi setelah API pulih (rate limit biasanya pulih dalam 1 jam)."
+                exit 1
+                ;;
+            esac
+            MUNDUR_TAHAN="$(echo "$CMP_TAHAN" | jq -r '.behind_by // empty' 2>/dev/null || true)"
+            if { [ "$ST_TAHAN" = "ahead" ] || [ "$ST_TAHAN" = "identical" ]; } \
+               && [ "$MUNDUR_TAHAN" = "0" ]; then
+              TAHAN="$BARIS_TAHAN"
+              RELASI="SHA itu masih LELUHUR tujuan ($ST_TAHAN, behind_by 0) - kodenya ikut terbawa"
+              break
+            fi
+            echo "catatan  : penahanan ${SHA_TAHAN:0:9} kedaluwarsa (status $ST_TAHAN terhadap tujuan) - commit itu sudah lepas dari cabang."
+          done < /tmp/baris_tahan.txt
+
+          if [ -n "$TAHAN" ]; then
+            echo ""
+            echo "DITOLAK: kenaikan ini membawa SHA yang sudah diaudit dan DITOLAK."
+            echo "  $TAHAN"
+            echo "  alasan penolakan sekarang: $RELASI"
+            echo ""
+            echo "Penahanan ini TIDAK bisa dilewati dengan paksa = true: 'paksa' berarti"
+            echo "\"sudah saya audit\", dan berkas ini mencatat bahwa auditnya sudah"
+            echo "dikerjakan dan hasilnya menolak."
+            echo ""
+            echo "Satu-satunya jalan keluar: audit ULANG SHA tujuannya - termasuk apakah"
+            echo "upstream sudah memperbaiki cacat yang dicatat di baris itu - lalu HAPUS"
+            echo "baris '# TAHAN' di atas dari pins.env, commit, dan jalankan tombol ini"
+            echo "lagi. Penghapusan itu tercatat di riwayat git dan bisa ditinjau;"
+            echo "centang tidak meninggalkan jejak alasan."
+            echo ""
+            echo "Penahanan kedaluwarsa SENDIRI hanya kalau upstream membuang commit itu"
+            echo "(rebase/force-push) - bukan sekadar karena upstream bergerak maju."
+            exit 1
+          fi
+
+          echo "komponen : $KOMPONEN ($NAMA)"
+          echo "repo     : $REPO@$REF"
+          echo "lama     : $LAMA"
+          echo "tujuan   : $BARU"
+
+          if [ "$LAMA" = "$BARU" ]; then
+            echo "Sudah di sana. Tidak ada yang diubah."
+            echo "TIDAK_ADA_PERUBAHAN=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          # ---------- triase ----------
+          CMP="$(gh api "repos/$REPO/compare/$LAMA...$BARU" 2>/dev/null || true)"
+          # Bukan `test -n "$CMP"`: badan error pun JSON yang sah dan tidak
+          # kosong. Yang membuktikan compare betul-betul terjawab adalah adanya
+          # .status - field yang tidak dimiliki badan error. Tanpa ini .files
+          # ikut kosong, sehingga "$KENA sensitif" berbunyi 0 dan triase lolos
+          # justru ketika ia tidak tahu apa-apa. (Revisi ke-34.)
+          # REVISI KE-41: penjaga di atas SALAH PREMIS dan karena itu tidak
+          # pernah menyala. Badan error GitHub berbentuk
+          #     {"message":"Not Found","documentation_url":"...","status":"404"}
+          # - ADA field `status`, isinya kode HTTP sebagai string. Jadi
+          # `.status // empty` pulang "404", `test -n` lolos, dan seluruh triase
+          # di bawah berjalan di atas badan error: STATUS="404" (bukan "behind",
+          # jadi gerbang mundur diam), .files kosong -> N_BERKAS=0 dan KENA=0
+          # (jadi gerbang 300 dan gerbang sensitif ikut diam) -> pin DITULIS
+          # tanpa satu pun pemeriksaan yang benar-benar terjadi. Di pin-watch
+          # akibatnya laporan yang bohong; DI SINI akibatnya commit.
+          # Penjaganya sekarang bentuk yang tidak bisa dipalsukan badan error:
+          # status wajib salah satu dari empat nilai compare yang sah.
+          STATUS_CEK="$(echo "$CMP" | jq -r '.status // empty' 2>/dev/null || true)"
+          case "$STATUS_CEK" in
+            ahead|behind|identical|diverged) ;;
+            *)
+              echo "ERROR: tidak bisa membandingkan $LAMA...$BARU di $REPO."
+              echo "       status yang terbaca: '${STATUS_CEK:-(tidak ada)}' - bukan"
+              echo "       ahead/behind/identical/diverged, jadi ini bukan jawaban compare."
+              echo "       jawaban API: ${CMP:0:120}"
+              exit 1
+              ;;
+          esac
+
+          # STATUS dicetak tapi SENGAJA tidak dipakai untuk menolak, tidak seperti
+          # di pin-watch.yml yang memvonis "diverged" sebagai ORPHAN (revisi
+          # ke-29b, supaya pembaca berikutnya tahu ini pilihan, bukan kelupaan).
+          # Alasannya: di sana "diverged" berarti pin yang SEDANG dipakai sudah
+          # lepas dari branch - keadaan yang harus diperbaiki, dan memperbaikinya
+          # justru dengan menaikkan pin. Menolak di sini malah mengunci pohon di
+          # commit orphan. Triase-nya tetap sahih: compare tiga-titik memulangkan
+          # diff dari merge-base ke tujuan, jadi .files tetap berisi "apa yang
+          # baru di tujuan", persis yang dipakai untuk menghitung file sensitif.
+          STATUS="$(echo "$CMP" | jq -r .status)"
+          MAJU="$(echo "$CMP" | jq -r .ahead_by)"
+          BERKAS="$(echo "$CMP" | jq -r '.files[]?.filename')"
+          # Revisi ke-81: kalimat "triase-nya tetap sahih" di atas cuma separuh
+          # benar. Untuk 'diverged' .files berisi merge-base -> tujuan, tapi
+          # commit yang hanya ada di sisi PIN (behind_by) ikut HILANG saat pin
+          # dinaikkan, dan berkasnya tidak pernah dihitung. Kasus nyata
+          # 2026-10-13: KSU 6200478dd -> f4435f007 membuang revert penangguhan
+          # SUSFS di kernel/tools/susfs_compat.mk, tapi triase berbunyi
+          # "0 sensitif"; yang menolak cuma baris TAHAN. Compare kebalikannya
+          # (tujuan...pin) memberi persis berkas sisi pin itu; digabung ke BERKAS.
+          if [ "$STATUS" = "diverged" ]; then
+            CMP_BALIK="$(gh api "repos/$REPO/compare/$BARU...$LAMA" 2>/dev/null || true)"
+            if [ "$(echo "$CMP_BALIK" | jq -r '.status // empty' 2>/dev/null || true)" != "diverged" ]; then
+              sleep 5
+              CMP_BALIK="$(gh api "repos/$REPO/compare/$BARU...$LAMA" 2>/dev/null || true)"
+            fi
+            if [ "$(echo "$CMP_BALIK" | jq -r '.status // empty' 2>/dev/null || true)" != "diverged" ]; then
+              echo "compare balik $BARU...$LAMA tak terbaca, jadi commit sisi pin yang"
+              echo "akan hilang tidak bisa dinilai."
+              if [ "$PAKSA" != "true" ]; then
+                echo "DITOLAK. Sesudah diaudit, jalankan ulang dengan paksa = true."
+                exit 1
+              fi
+              echo "PAKSA aktif - diteruskan tanpa menilai commit yang hilang."
+            else
+              BERKAS_HILANG="$(echo "$CMP_BALIK" | jq -r '.files[]?.filename')"
+              N_HILANG="$(echo "$BERKAS_HILANG" | grep -c . || true)"
+              echo "commit sisi pin yang HILANG: $(echo "$CMP_BALIK" | jq -r .ahead_by), ${N_HILANG:-0} file (ikut dinilai di bawah)"
+              BERKAS="$(printf '%s\n%s\n' "$BERKAS" "$BERKAS_HILANG" | grep . | sort -u || true)"
+              if [ "${N_HILANG:-0}" -ge 300 ]; then
+                # Sama dengan gerbang 300 di bawah: daftar terpotong tidak bisa
+                # dipakai untuk bilang "0 sensitif".
+                N_BERKAS_PAKSA_300=1
+              fi
+            fi
+          fi
+          N_BERKAS="$(echo "$BERKAS" | grep -c . || true)"
+          KENA="$(echo "$BERKAS" | grep -cE "$SENSITIF" || true)"
+          : "${N_BERKAS:=0}" "${KENA:=0}"
+          if [ "${N_BERKAS_PAKSA_300:-0}" = "1" ] && [ "$N_BERKAS" -lt 300 ]; then N_BERKAS=300; fi
+
+          echo "status   : $STATUS, maju $MAJU commit, $N_BERKAS file, $KENA sensitif"
+          # Revisi ke-39: status 'behind' berarti tujuan ada DI BELAKANG pin
+          # sekarang - ini penurunan pin, bukan kenaikan. Terjadi kalau upstream
+          # force-push mundur, atau kalau SHA diketik tangan ke kolom `sha`.
+          # Berbahaya justru karena tampak bersih: untuk 'behind' API compare
+          # mengembalikan .files KOSONG, jadi N_BERKAS=0 dan KENA=0 dan seluruh
+          # triase di bawah ini lolos tanpa satu pun peringatan. Jalur yang sama
+          # dengan revisi ke-34: kegagalan yang berbunyi menenangkan.
+          if [ "$STATUS" = "behind" ] && [ "$PAKSA" != "true" ]; then
+            echo ""
+            echo "DITOLAK: $BARU ada DI BELAKANG pin sekarang ($LAMA)."
+            echo "Ini MENURUNKAN pin, bukan menaikkannya, dan daftar file di atas kosong"
+            echo "karena API compare memang tidak mengisi .files untuk arah mundur -"
+            echo "jadi '0 sensitif' di sini tidak berarti apa-apa."
+            echo "Kalau penurunan ini memang disengaja (rollback), jalankan ulang dengan paksa = true."
+            exit 1
+          fi
+
+          # API compare memotong .files di 300 berkas (terbukti di torvalds/linux
+          # v5.10...v5.11: .files 300 padahal total_commits 10000, dan ?page=2
+          # kosong). Kalau daftar mentok di situ, "KENA=0" hanya berlaku untuk 300
+          # berkas pertama - berkas ke-301 bisa saja ^kernel/ atau ^fs/. Jalur cepat
+          # ini tidak boleh dipakai untuk melewati audit hanya karena diff-nya besar.
+          if [ "$N_BERKAS" -ge 300 ] && [ "$PAKSA" != "true" ]; then
+            echo ""
+            echo "DITOLAK: daftar file dari API compare terpotong di $N_BERKAS berkas,"
+            echo "jadi hitungan '$KENA sensitif' tidak bisa dipercaya untuk kenaikan ini."
+            echo "Buka diff-nya sendiri: https://github.com/$REPO/compare/$LAMA...$BARU"
+            echo "Sesudah diaudit, jalankan ulang dengan paksa = true."
+            exit 1
+          fi
+
+          if [ "$KENA" -gt 0 ]; then
+            echo ""
+            echo "File sensitif yang tersentuh:"
+            echo "$BERKAS" | grep -E "$SENSITIF" | head -20 | sed 's/^/  - /'
+            # Revisi ke-90: dulu dipotong di 20 tanpa tanda (sama dengan pin-watch).
+            if [ "$KENA" -gt 20 ]; then
+              echo "  - ... dan $((KENA - 20)) lagi (daftar dipotong di 20; lengkapnya di diff)"
+            fi
+            echo ""
+            if [ "$PAKSA" != "true" ]; then
+              echo "DITOLAK: kenaikan ini menyentuh bagian yang dulu diaudit."
+              echo "Patch/fixer bisa ikut patah, dan itu tidak ketahuan dari build hijau."
+              echo "Minta audit dulu. Kalau memang sudah diaudit, jalankan ulang dengan paksa = true."
+              exit 1
+            fi
+            echo "PAKSA aktif - diteruskan atas tanggung jawab penekan tombol."
+          fi
+
+          # ---------- tulis ----------
+          sed -i "s|^${NAMA}=${LAMA}$|${NAMA}=${BARU}|" pins.env
+
+          # Buktikan yang berubah tepat SATU baris, dan itu baris yang dimaksud.
+          UBAH="$(git diff --numstat -- pins.env | awk '{print $1 "/" $2}')"
+          test "$UBAH" = "1/1" || { echo "ERROR: pins.env berubah $UBAH baris, harusnya 1/1"; exit 1; }
+          grep -qE "^${NAMA}=${BARU}$" pins.env || { echo "ERROR: baris $NAMA tidak jadi tertulis"; exit 1; }
+
+          {
+            echo "## Pin dinaikkan"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| komponen | $KOMPONEN (\`$NAMA\`) |"
+            echo "| dari | \`${LAMA:0:9}\` |"
+            echo "| ke | \`${BARU:0:9}\` |"
+            echo "| isi | $MAJU commit, $N_BERKAS file, $KENA sensitif |"
+            echo "| diff | https://github.com/$REPO/compare/$LAMA...$BARU |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          {
+            echo "NAMA=$NAMA"
+            echo "LAMA=$LAMA"
+            echo "BARU=$BARU"
+          } >> "$GITHUB_ENV"
+
+      - name: Commit pins.env
+        if: env.TIDAK_ADA_PERUBAHAN != '1'
+        run: |
+          set -euo pipefail
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add pins.env
+          # Dua -m, bukan satu pesan multi-baris: indentasi blok YAML ini akan
+          # ikut terbawa ke badan commit kalau ditulis dalam satu string.
+          git commit \
+            -m "pins: ${NAMA} ${LAMA:0:9} -> ${BARU:0:9}" \
+            -m "Dinaikkan lewat workflow \"Naikkan pin\" oleh @${GITHUB_ACTOR}. Triase lolos: nol file sensitif tersentuh, atau paksa = true."
+          git push
+
+      # Revisi ke-32: alasan yang sama dengan "Panggil build" di bawah. pin-watch
+      # sekarang punya trigger `push: paths: pins.env`, tapi trigger itu TIDAK
+      # menyala untuk commit di atas - commit dari GITHUB_TOKEN tidak memicu
+      # event push. Tanpa panggilan eksplisit ini, issue "Pantau pin upstream"
+      # akan tetap menganga menyuruh menaikkan pin yang baru saja dinaikkan oleh
+      # tombol ini sendiri. Dipanggil TANPA syarat `bangun`: laporan harus segar
+      # walau pemiliknya memilih tidak membangun sekarang. `|| true` karena
+      # menyegarkan laporan tidak boleh menggagalkan kenaikan pin yang sudah
+      # sah tertulis dan ter-commit - pin-watch akan jalan lagi besok pagi.
+      - name: Segarkan laporan pin-watch
+        if: env.TIDAK_ADA_PERUBAHAN != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run pin-watch.yml --ref "${GITHUB_REF_NAME}" \
+            || echo "CATATAN: gagal memanggil pin-watch; laporan disegarkan oleh jadwal."
+
+      # Commit dari GITHUB_TOKEN SENGAJA tidak memicu event push - itu aturan
+      # GitHub untuk mencegah workflow saling memicu tanpa henti. Jadi build
+      # dipanggil eksplisit di sini, bukan lewat `paths:` di workflow build.
+      - name: Panggil build
+        if: env.TIDAK_ADA_PERUBAHAN != '1' && inputs.bangun
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run build-kernel-ksu-v2.yml --ref "${GITHUB_REF_NAME}"
+          echo "Build dipanggil. Hasilnya terbit sebagai Release kalau hijau." >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,819 @@
+# ============================================================
+# Pantau pin upstream - robot triase, BUKAN robot build.
+#
+# Kenapa ada: dari revisi ke-9 sampai ke-23, kerja yang benar-benar butuh
+# penilaian manusia/Claude cuma SATU pertanyaan: "upstream bergerak - ini boleh
+# dinaikkan sendiri, atau isinya menyentuh bagian yang dulu diaudit?". Selebihnya
+# (ambil HEAD, bandingkan, lihat file apa yang berubah, tulis SHA baru) mekanis
+# dan bisa dikerjakan CI.
+#
+# Workflow ini TIDAK pernah meng-compile, TIDAK pernah mengubah pin, dan TIDAK
+# pernah mendorong commit. Ia cuma membaca pins.env di akar repo (sejak revisi
+# ke-26; kalimat ini sendiri masih menyebut build-kernel-ksu-v2.yml sampai
+# revisi ke-34 - prosa pun bisa jadi salinan kedua yang basi), membandingkan
+# kedelapan pin dengan upstream, lalu menulis satu issue berisi tabel + vonis per
+# komponen. Naik-turun pin tetap keputusan pemilik.
+#
+# Tiga hal yang dicek per komponen:
+#   1. TERTINGGAL?  pin != HEAD branch.
+#   2. ORPHAN?      pelajaran revisi ke-22: compare <pin>...<branch> menjawab
+#                   "diverged" = commit ter-pin sudah lepas dari branch karena
+#                   upstream me-rebase. Build lama akan mati di assert; sejak
+#                   revisi ke-22/23 self-heal menyelamatkannya, tapi tetap harus
+#                   tahu.
+#   3. KELAS APA?   file apa yang tersentuh di antara pin dan HEAD. Ini inti
+#                   triase-nya - lihat tabel JALUR_SENSITIF di bawah.
+#
+# ------------------------------------------------------------
+# REVISI KE-34 (2026-09-15) - audit ulang sesudah revisi ke-33 hijau. Kedelapan
+# pin di HEAD, jadi tidak ada yang tertinggal dan ORPHAN mustahil (pin yang sama
+# dengan ujung branch terjangkau menurut definisi); auditnya jatuh ke LOGIKA.
+#
+# Yang dikerjakan: menguji dua jalur yang paling penting dan belum SEKALI PUN
+# menyala sejak ditulis - vonis ORPHAN dan jalur API-gagal - dengan menjalankan
+# blok run: ini di luar CI, `gh issue`/`gh workflow` distub, KSU_PIN diganti
+# orphan sungguhan dari revisi ke-22 (f4c4923e, sampai hari ini masih dijawab
+# `diverged` oleh compare API).
+#
+# Jalur ORPHAN: SEHAT. Ia mencetak "**ORPHAN** (diverged, maju 15 mundur 1)"
+# plus "**PERLU AUDIT** - 1 file sensitif", tujuh baris lain "di HEAD".
+#
+# Jalur API-gagal: CACAT, dan cacatnya kelas terburuk - gagal yang berbunyi
+# menenangkan. `gh api` mencetak BADAN error-nya (JSON 401/403/404/5xx) ke
+# STDOUT, bukan stderr, dan exit code-nya hilang di dalam $( ). Jadi penjaga
+# lama `[ -z "$head" ]` MUSTAHIL menyala: $head berisi '{ "message": "Bad
+# credentials", ... }' - 112 byte, lulus -z - lalu dipakai sebagai SHA tujuan.
+# Karena badan error tidak punya field .files, n_berkas=0 dan kena=0, sehingga
+# vonisnya jadi **AMAN dinaikkan** dan laporan menyuruh pemilik menaikkan pin ke
+# `{ "mes`. Hal yang sama pada cmp_json: badan error adalah JSON yang sah, jadi
+# -z lolos dan .status terbaca null.
+#
+# Obatnya bukan "tidak kosong" melainkan BENTUK: $head wajib cocok
+# ^[0-9a-f]{40}$, dan compare dinyatakan terjawab hanya kalau .status ada
+# (field yang tidak dimiliki badan error).
+#   ^-- REVISI KE-41: kalimat dalam kurung itu SALAH dan sudah diperbaiki di
+#   tempatnya (cari "REVISI KE-41" di step "Bandingkan"). Badan error GitHub
+#   JUSTRU punya field `status` berisi kode HTTP sebagai string ("404"), jadi
+#   penjaga revisi ke-34 untuk compare tidak pernah menyala selama tujuh
+#   revisi. Yang dipakai sekarang: status wajib salah satu dari
+#   ahead|behind|identical|diverged. Penjaga $head sendiri (40 hex) memang
+#   benar sejak awal - yang cacat cuma penjaga compare-nya.
+# Sesudah ditambal, input yang sama
+# memberi delapan baris **GAGAL AMBIL** dan kalimat "laporan ini belum tentu
+# lengkap" - jalur revisi ke-29 yang sudah ada, yang dulu tidak pernah bisa
+# dicapai. Lubang yang sama ditambal di naikkan-pin.yml (di sana ujungnya masih
+# gagal-aman di assert 1/1, tapi sesudah menulis sampah ke pins.env) dan di
+# ~/bin/pincheck (di sana ia melaporkan "TERTINGGAL" palsu).
+#
+# Catatan alat: GAGAL AMBIL bukan teori - API commits untuk repo kernel pernah
+# meleset satu kali waktu audit revisi ke-29 dan berhasil di percobaan ulang.
+# ------------------------------------------------------------
+# ============================================================
+name: Pantau pin upstream
+
+on:
+  schedule:
+    # Revisi ke-32 menggeser '0 1 * * *' -> '23 1 * * *' dengan dugaan: menit :00
+    # adalah menit terpadat di GitHub dan run terjadwal repo PRIVAT mengantre di
+    # belakangnya, jadi menit ganjil mestinya lolos.
+    #
+    # REVISI KE-37 - DUGAAN ITU SALAH, dan datanya sekarang cukup untuk bilang
+    # begitu. Keempat run terjadwal yang pernah ada:
+    #
+    #   cron :00  -> mulai 05:52Z (14 Sep), 05:54Z (15 Sep)
+    #   cron :23  -> mulai 06:14Z (16 Sep), 06:16Z (17 Sep)
+    #
+    # Telatnya ~4 jam 51 menit di KEEMPAT-empatnya. Menggeser jadwal 23 menit
+    # hanya menggeser waktu mulai 23 menit - offset-nya tidak bergerak sedikit
+    # pun. Dan dua run terakhir terjadi SESUDAH repo dijadikan publik (revisi
+    # ke-36), jadi "repo privat mengantre" juga bukan sebabnya. Ini antrean
+    # scheduler GitHub, di luar jangkauan berkas ini.
+    #
+    # Sengaja TIDAK dikompensasi dengan menggeser cron ~4j51m lebih awal:
+    # offset itu milik GitHub, bukan kontrak. Begitu mereka memperbaiki
+    # antreannya, laporan justru mendarat jam 3 pagi. Yang membuat keterlambatan
+    # ini tidak penting bukan jadwalnya, melainkan trigger `push: pins.env` dan
+    # panggilan eksplisit dari naikkan-pin.yml di bawah - jadwal cuma jaring
+    # terakhir. Jam di badan issue selalu jam NYATA run, jadi laporannya sendiri
+    # tidak pernah berbohong soal ini; yang dulu berbohong komentar ini.
+    - cron: '23 1 * * *'
+  workflow_dispatch:
+  # Revisi ke-32 - LUBANG YANG DITAMBAL DI SINI. Sampai revisi ke-31 robot ini
+  # hanya jalan lewat jadwal dan tombol, sehingga TIDAK ADA yang menghubungkan
+  # "pin naik" dengan "laporan disegarkan": issue tetap menganga berisi drift
+  # yang sudah beres, sampai jadwal berikutnya. Nyata di issue #2 - laporan
+  # 05:55Z menyuruh menaikkan KSU & SUSFS, keduanya sudah dinaikkan 11:25Z di
+  # revisi ke-30, dan issue-nya tetap terbuka berjam-jam menyuruh mengerjakan
+  # pekerjaan yang sudah selesai. (Issue #1 memang tertutup sendiri, tapi oleh
+  # run workflow_dispatch 34864188373 - ditekan tangan, bukan oleh jadwal.)
+  # Laporan basi lebih berbahaya daripada tidak ada laporan: ia melatih
+  # pembacanya mengabaikan issue ini.
+  push:
+    branches: [ main ]
+    paths:
+      - 'pins.env'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: pin-watch
+  cancel-in-progress: true
+
+jobs:
+  pantau:
+    # Dipin 2026-10-02: label ubuntu-latest pindah ke Ubuntu 26.04 mulai
+    # 2026-10-19. Sama dengan workflow build dan rilis BRENE (24.04); naikkan
+    # bersama-sama, sesudah diuji, bukan diam-diam lewat label.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      # Revisi ke-75: setiap `uses:` dipin ke SHA commit, versi rilisnya di
+      # komentar ujung baris. Tag major (v6/v7) bisa digeser pemilik repo aksi ke
+      # commit mana pun tanpa jejak di repo ini - dan aksi itu jalan dengan token
+      # job ini. Deskripsi repo menjanjikan "semua sumber dipin SHA"; sebelum
+      # revisi ini aksi GitHub satu-satunya pengecualian. preflight.sh [3/4]
+      # membandingkan SHA ini dengan rilis terbaru tiap aksi.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Bandingkan pin dengan upstream dan tulis laporan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Revisi ke-26: pin pindah dari workflow build ke pins.env.
+          WF: pins.env
+        run: |
+          set -u
+          test -f "$WF" || { echo "ERROR: $WF tidak ada"; exit 1; }
+
+          # Pin dibaca DARI FILE, tidak pernah disalin ke sini, supaya laporan ini
+          # tidak bisa basi sendiri kalau pin dinaikkan tanpa menyentuh workflow ini.
+          # Sejak revisi ke-26 filenya pins.env, bukan lagi workflow build:
+          # GITHUB_TOKEN dilarang menulis di .github/workflows/, jadi pin harus
+          # tinggal di luar sana supaya bisa dinaikkan oleh workflow.
+          # Revisi ke-77: pola dibaca PERSIS seperti step "Muat pins.env" di build
+          # - CR dibuang, huruf kecil saja (dulu `-i`), dan berujung `$` (dulu
+          # tidak). Sebelumnya baris yang DITOLAK build (hex huruf besar, ekor
+          # sesudah 40 hex) tetap terbaca di sini sebagai pin sah, jadi laporan
+          # bisa berbunyi "di HEAD" untuk pins.env yang tidak bisa dibangun.
+          ambil() { tr -d '\r' < "$WF" | grep -oE "$1\$" | head -1 | grep -oE '[0-9a-f]{40}'; }
+
+          # Pemisah field SENGAJA ';' bukan '|': regex jalur sensitif di kolom 4
+          # sendiri memakai '|' (alternasi), dan dengan IFS='|' field-nya akan
+          # tergeser - sensitif jadi '^(fs/' yang tanda kurungnya tak tertutup.
+          # Ketahuan waktu dry-run lokal; actionlint maupun shellcheck sama
+          # sekali tidak melihatnya. (Catatan: baris komentar JANGAN pernah
+          # dimulai dengan kata "shellcheck" - itu dibaca sebagai direktif dan
+          # membuat shellcheck berhenti memeriksa sisa skrip.)
+          # pola-di-file ; repo ; branch ; regex jalur sensitif ; nama
+          #
+          # "jalur sensitif" = file yang, kalau tersentuh, membatalkan audit lama:
+          #   - kernel source  : apa pun (sejak 2026-10-02). Dulu cuma fs/ dan
+          #                      defconfig, dengan anggapan "semua patch SUSFS
+          #                      mendarat di fs/" - SALAH: patch 4.14 juga
+          #                      menyentuh kernel/sys.c, kernel/kallsyms.c,
+          #                      mm/memory.c, security/selinux/avc.c, include/,
+          #                      skrip hook menyentuh security/ dan
+          #                      drivers/input/input.c, dan step "Setelan
+          #                      memori" menambal mm/, kernel/sysctl.c dan
+          #                      drivers/block/zram/. Lagi pula setiap commit
+          #                      di repo ini mengubah kernel yang dikompilasi.
+          #   - BakaSU         : kernel/ saja. Perubahan di manager/ atau
+          #                      userspace/ nol dampak ke kernel yang dibangun.
+          #   - SUSFS          : patch 4.14 dan script hook - ini yang berulang
+          #                      kali mematahkan anchor fixer.
+          #   - NoMount dev    : kernel/src/ (driver yang dikompilasi) dan
+          #                      userspace/src/ (step "Compile nm" menyalin
+          #                      nm.c + nm.h dari pin yang sama; file baru di
+          #                      sana mematahkan build). Sejak 2026-10-02.
+          #   - NoMount master : kernel/setup.sh (loader yang dipanggil workflow).
+          #   - AnyKernel3     : tools/ (ak3-core.sh; anykernel.sh ditimpa workflow),
+          #                      META-INF/ (update-binary = titik masuk flash) dan
+          #                      ramdisk/ (dump_boot menimpakan isinya ke ramdisk
+          #                      boot). Dua yang terakhir sejak 2026-10-02.
+          #   - proton-clang   : apa pun = ganti compiler.
+          #   - Build-Kernel_scripts: apa pun = ganti cara integrasi.
+          KOMPONEN='
+          ^KERNEL_PIN=[0-9a-f]{40};dlagia/android_kernel_xiaomi_rosemary;rosemary-13;.;source kernel
+          ^KSU_PIN=[0-9a-f]{40};Baka-SU/BakaSU;main;^kernel/;BakaSU
+          ^SUSFS_PIN=[0-9a-f]{40};JackA1ltman/NonGKI_Kernel_Build_2nd;mainline;(susfs_patch_to_4\.14\.patch|^scripts/|hook);SUSFS
+          ^NOMOUNT_PIN=[0-9a-f]{40};maxsteeel/nomount;dev;^(kernel/src/|userspace/src/);NoMount driver
+          ^NOMOUNT_LOADER_PIN=[0-9a-f]{40};maxsteeel/nomount;master;^kernel/setup\.sh;NoMount loader
+          ^CLANG_PIN=[0-9a-f]{40};kdrag0n/proton-clang;master;.;proton-clang
+          ^AK3_PIN=[0-9a-f]{40};vlxlxlv/AnyKernel3;mt6781;^(tools/|META-INF/|ramdisk/);AnyKernel3
+          ^SCRIPTS_PIN=[0-9a-f]{40};dlagia/Build-Kernel_scripts;main;.;Build-Kernel_scripts
+          '
+
+          TABEL=/tmp/tabel.md
+          RINCI=/tmp/rinci.md
+          : > "$TABEL"
+          : > "$RINCI"
+          PERLU_AUDIT=0
+          ADA_DRIFT=0
+
+          printf '| Komponen | Dipin | HEAD | Status | Vonis |\n' >> "$TABEL"
+          printf '|---|---|---|---|---|\n' >> "$TABEL"
+
+          rm -f /tmp/perlu_audit /tmp/ada_drift
+
+          echo "$KOMPONEN" | grep -v '^[[:space:]]*$' | while IFS=';' read -r pola repo ref sensitif nama; do
+            # REVISI KE-46 - `|| true` DI BARIS BAWAH ADALAH SELURUH GUNANYA
+            # CABANG "POLA TAK KETEMU". Tanpanya cabang itu MUSTAHIL menyala:
+            # step Actions jalan dengan `bash -e`, `ambil` berujung pada grep
+            # yang keluar 1 kalau polanya tidak ketemu, dan `pin=$(ambil ...)`
+            # mewarisi kode keluar itu - jadi shell mati DI BARIS PENGAMBILAN,
+            # tiga baris sebelum `if [ -z "$pin" ]` yang seharusnya mengurusnya.
+            # Akibatnya bukan cuma satu cabang mati. Sisa step tidak jalan sama
+            # sekali: tidak ada tabel, tidak ada laporan, dan - yang terburuk -
+            # blok pengurus issue di ujung step tidak pernah tercapai, sehingga
+            # issue yang sedang terbuka membeku menganga tanpa satu kalimat pun
+            # yang menyebut kenapa. Itu menggabungkan dua kerusakan yang sudah
+            # pernah ditambal: laporan basi (revisi ke-32) dan PERLU_AUDIT yang
+            # tak pernah sampai ke pembacanya (revisi ke-29).
+            # Dibuktikan di luar CI, bukan dibaca dari kode: tabel dua baris
+            # dengan pola baris kedua sengaja dibuat tidak ada -> baris pertama
+            # tercetak, "POLA TAK KETEMU" tidak pernah, kalimat sesudah loop
+            # juga tidak, exit 1. Kelas yang sama dengan revisi ke-34/39/41:
+            # penjaga yang berhenti menjaga tanpa meninggalkan satu tanda pun.
+            #
+            # Sekalian, yang dinilai BUKAN "ada" melainkan "ada PERSIS SATU".
+            # Nama ganda di pins.env gampang terjadi lewat sunting tangan di web
+            # GitHub - dan jalur itu memang sah - lalu `ambil` diam-diam memakai
+            # baris PERTAMA (`head -1`) sedangkan $GITHUB_ENV di step "Muat
+            # pins.env" memakai yang TERAKHIR. Step pemuat build dan preflight.sh
+            # sudah menolak keadaan ini sejak revisi ke-33 dan tombol "Naikkan
+            # pin" menyusul kemudian; robot ini pembaca terakhir yang belum
+            # punya penjaganya, jadi sampai sekarang ia bisa melaporkan SHA yang
+            # berbeda dari yang benar-benar dikompilasi - dengan kedua-duanya
+            # tetap hijau.
+            n_baris=$(tr -d '\r' < "$WF" | grep -cE "$pola\$" || true)
+            pin=$(ambil "$pola" || true)
+            # Nama variabel pins.env-nya, dikupas dari polanya sendiri
+            # (^KSU_PIN=[0-9a-f]{40} -> KSU_PIN) supaya tidak jadi salinan
+            # kesembilan dari tabel yang sama. Dipakai revisi ke-37 untuk
+            # mencetak baris pins.env yang siap disalin apa adanya.
+            pola_nama=$(printf '%s' "$pola" | sed 's/^[[:space:]]*\^\{0,1\}//; s/=.*$//')
+
+            if [ -z "$pin" ] || [ "${n_baris:-0}" != "1" ]; then
+              printf '| %s | - | - | **POLA TAK KETEMU** | %s baris cocok di `%s` (wajib persis 1) - perbarui pin-watch.yml atau pins.env |\n' \
+                "$nama" "${n_baris:-0}" "$WF" >> "$TABEL"
+              echo 1 > /tmp/perlu_audit
+              continue
+            fi
+
+            head=$(gh api "repos/$repo/commits/$ref" --jq .sha 2>/dev/null || true)
+            # Revisi ke-43: SEKALI ulang, bukan lebih. Panggilan pertama ke
+            # gh api gagal sendirian di sini pada 2026-09-21 (pincheck lokal:
+            # satu baris GAGAL AMBIL, tujuh sisanya mulus, dan pengulangan
+            # utuh langsung hijau) - di CI bentuk yang sama adalah 5xx atau
+            # rate limit sesaat. Tanpa ulangan, satu kedipan API menerbitkan
+            # laporan "belum tentu lengkap" yang menuntut ditindak padahal tak
+            # ada apa-apa, dan laporan yang sesekali merah tanpa sebab
+            # mengajari pembacanya melewatinya - persis kerusakan yang revisi
+            # ke-32 dan ke-40 perbaiki. Yang TIDAK ditutupi ulangan ini: repo
+            # yang benar-benar hilang/privat tetap gagal dua kali dan tetap
+            # dilaporkan GAGAL AMBIL.
+            if ! printf '%s' "$head" | grep -qE '^[0-9a-f]{40}$'; then
+              sleep 5
+              head=$(gh api "repos/$repo/commits/$ref" --jq .sha 2>/dev/null || true)
+            fi
+            # WAJIB 40 hex, bukan cuma "tidak kosong". `gh api` mencetak BADAN
+            # error-nya (JSON 401/403/404/5xx) ke STDOUT, bukan stderr, jadi
+            # penjaga `-z` yang lama MUSTAHIL menyala: sekali API tersendat,
+            # $head berisi '{ "message": "Bad credentials", ... }' - 112 byte,
+            # lulus `-z`, lalu dipakai sebagai SHA tujuan. Akibatnya laporan
+            # menyuruh menaikkan pin ke `{ "mes` dan - karena .files tidak ada
+            # di badan error sehingga n_berkas=0 dan kena=0 - memvonisnya
+            # **AMAN dinaikkan**. Ditemukan di audit revisi ke-34 lewat dry-run
+            # jalur ORPHAN dengan token sengaja dibuat salah, dan dibuktikan
+            # ulang di luar stub. Justru vonis paling menenangkan yang keluar
+            # dari kegagalan paling tidak kelihatan.
+            if ! printf '%s' "$head" | grep -qE '^[0-9a-f]{40}$'; then
+              printf '| %s | `%s` | - | **GAGAL AMBIL** | repo hilang/privat, atau API tersendat |\n' \
+                "$nama" "${pin:0:9}" >> "$TABEL"
+              echo 1 > /tmp/perlu_audit
+              continue
+            fi
+
+            if [ "$pin" = "$head" ]; then
+              # Revisi ke-77: "di HEAD" dulu tidak pernah membaca `# TAHAN`.
+              # Tombol "Naikkan pin" menolak kenaikan yang membawa SHA yang
+              # ditahan, tapi jalur lain yang sah - push.sh, sunting web -
+              # tidak melewati tombol itu. Pin yang dinaikkan lewat sana ke SHA
+              # yang ditahan (atau ke keturunannya) dilaporkan bersih di sini,
+              # sampai upstream bergerak lagi. Biaya API nol selama tidak ada
+              # baris TAHAN (keadaan normal).
+              bawa=""
+              while read -r baris_tahan; do
+                [ -n "$baris_tahan" ] || continue
+                sha_tahan=$(printf '%s' "$baris_tahan" | grep -oE '[0-9a-f]{40}' | head -1)
+                if [ "$sha_tahan" = "$pin" ]; then
+                  bawa="pin PERSIS SHA yang ditahan"
+                  break
+                fi
+                cmp_tahan=$(gh api "repos/$repo/compare/${sha_tahan}...${pin}" 2>/dev/null || true)
+                st_tahan=$(printf '%s' "$cmp_tahan" | jq -r '.status // empty' 2>/dev/null || true)
+                case "$st_tahan" in
+                  404|behind|diverged) continue ;;
+                  ahead|identical) ;;
+                  *)
+                    bawa="penahanan \`${sha_tahan:0:9}\` TAK BISA DINILAI (compare menjawab '${st_tahan:-kosong}')"
+                    break
+                    ;;
+                esac
+                mundur_tahan=$(printf '%s' "$cmp_tahan" | jq -r '.behind_by // empty' 2>/dev/null || true)
+                if [ "$mundur_tahan" = "0" ]; then
+                  bawa="\`${sha_tahan:0:9}\` LELUHUR pin ($st_tahan, behind_by 0) - kodenya ikut dikompilasi"
+                  break
+                fi
+              done < <(grep -E "^# TAHAN [A-Za-z0-9_-]+ [0-9a-f]{40}([[:space:]].*)?$" "$WF" || true)
+              if [ -n "$bawa" ]; then
+                printf '| %s | `%s` | `%s` | di HEAD | **PERLU AUDIT** - pin membawa SHA yang ditahan: %s. Audit ulang lalu hapus baris `# TAHAN`-nya, atau turunkan pin |\n' \
+                  "$nama" "${pin:0:9}" "${head:0:9}" "$bawa" >> "$TABEL"
+                echo 1 > /tmp/perlu_audit
+                continue
+              fi
+              printf '| %s | `%s` | `%s` | di HEAD | - |\n' "$nama" "${pin:0:9}" "${head:0:9}" >> "$TABEL"
+              continue
+            fi
+
+            echo 1 > /tmp/ada_drift
+
+            # Satu panggilan compare memberi status keterjangkauan DAN daftar file.
+            cmp_json=$(gh api "repos/$repo/compare/$pin...$ref" 2>/dev/null || true)
+            # Alasan yang sama seperti $head di atas: badan error juga JSON yang
+            # sah, jadi `-z` lolos dan jq membaca .status sebagai null.
+            #
+            # REVISI KE-41 - PENJAGA REVISI KE-34 DI BARIS INI TIDAK PERNAH
+            # MENYALA. Kalimat lamanya berbunyi "badan error tidak punya field
+            # .status". Itu SALAH, dan dibuktikan salah hari ini: badan error
+            # GitHub berisi persis
+            #     {"message":"Not Found","documentation_url":"...","status":"404"}
+            # - ada field `status`, isinya kode HTTP sebagai STRING. Jadi
+            # `.status // empty` pulang "404", `[ -z ]` tidak menyala, dan
+            # baris-baris di bawah berjalan di atas badan error: .ahead_by null,
+            # .files kosong -> n_berkas 0, kena 0 -> kedua rantai `if` jatuh ke
+            # `else` -> vonisnya "AMAN dinaikkan - 0 file, nol menyentuh bagian
+            # yang diaudit", lengkap dengan baris salin-tempel pins.env. Persis
+            # kerusakan yang revisi ke-34 dikira sudah menutupnya: sekali API
+            # tersendat (rate limit 403, repo dihapus 404, 5xx), laporan ini
+            # menyuruh menaikkan pin yang tidak pernah ia periksa.
+            #
+            # Penjaganya karena itu bukan "ada .status" melainkan "status-nya
+            # salah satu dari EMPAT nilai yang sah" - bentuk yang tidak bisa
+            # dipalsukan badan error, karena "404" bukan salah satunya. Cara
+            # yang sama sudah dipakai pincheck sejak revisi ke-40 lewat `case`
+            # ber-daftar-putih; di sinilah seharusnya sejak dulu.
+            status=$(echo "$cmp_json" | jq -r '.status // empty' 2>/dev/null || true)
+            case "$status" in
+              ahead|behind|identical|diverged) ;;
+              *) status="" ;;
+            esac
+            if [ -z "$status" ]; then
+              printf '| %s | `%s` | `%s` | **TAK BISA DIBANDINGKAN** | pin dihapus total, atau API tersendat |\n' \
+                "$nama" "${pin:0:9}" "${head:0:9}" >> "$TABEL"
+              echo 1 > /tmp/perlu_audit
+              continue
+            fi
+            maju=$(echo "$cmp_json" | jq -r '.ahead_by')
+            mundur=$(echo "$cmp_json" | jq -r '.behind_by')
+            berkas=$(echo "$cmp_json" | jq -r '.files[]?.filename')
+            n_berkas=$(echo "$berkas" | grep -c . || true)
+            kena=$(echo "$berkas" | grep -cE "$sensitif" || true)
+            # Jaring pengaman: kalau regex-nya cacat, grep gagal dan $( ) pulang
+            # kosong -> `[ "$kena" -gt 0 ]` mati dengan "integer expected".
+            : "${n_berkas:=0}" "${kena:=0}"
+
+            # aman=1 artinya laporan boleh menyerahkan baris salin-tempel untuk
+            # menaikkan pin ini sendiri. Setiap cabang yang menulis
+            # /tmp/perlu_audit WAJIB juga menurunkannya jadi 0 - lihat alasannya
+            # di blok "cara menaikkan" di bawah.
+            aman=1
+
+            hilang_baris=""
+            if [ "$status" = "diverged" ]; then
+              ket="**ORPHAN** (diverged, maju $maju mundur $mundur)"
+              echo 1 > /tmp/perlu_audit
+              aman=0
+              # Revisi ke-81: "file tersentuh" di bawah cuma merge-base -> HEAD.
+              # Commit sisi pin ($mundur) ikut HILANG kalau dinaikkan, dan
+              # berkasnya dulu tidak disebut sama sekali (KSU 6200478dd: revert
+              # di kernel/ hilang, laporan bilang "sensitif 0").
+              # Sekali ulang, seperti setiap panggilan gh api lain di robot ini.
+              cmp_balik=$(gh api "repos/$repo/compare/$head...$pin" 2>/dev/null || true)
+              if [ "$(echo "$cmp_balik" | jq -r '.status // empty' 2>/dev/null || true)" != "diverged" ]; then
+                sleep 5
+                cmp_balik=$(gh api "repos/$repo/compare/$head...$pin" 2>/dev/null || true)
+              fi
+              if [ "$(echo "$cmp_balik" | jq -r '.status // empty' 2>/dev/null || true)" = "diverged" ]; then
+                b_hilang=$(echo "$cmp_balik" | jq -r '.files[]?.filename')
+                n_hilang=$(echo "$b_hilang" | grep -c . || true)
+                k_hilang=$(echo "$b_hilang" | grep -cE "$sensitif" || true)
+                hilang_baris="- commit sisi pin yang HILANG kalau dinaikkan: $mundur, file: ${n_hilang:-0}, yang sensitif: **${k_hilang:-0}**"
+                if [ "${k_hilang:-0}" -gt 0 ]; then
+                  hilang_baris="$hilang_baris ($(echo "$b_hilang" | grep -E "$sensitif" | head -5 | sed 's/^/`/; s/$/`/' | paste -sd, - || true)"
+                  # Revisi ke-90: sama dengan daftar di bawah - lebih dari 5 diberi tanda.
+                  if [ "$k_hilang" -gt 5 ]; then
+                    hilang_baris="$hilang_baris, ... dan $((k_hilang - 5)) lagi"
+                  fi
+                  hilang_baris="$hilang_baris)"
+                fi
+              else
+                hilang_baris="- commit sisi pin yang HILANG kalau dinaikkan: $mundur, berkasnya **tak terbaca** (compare balik gagal)"
+              fi
+            elif [ "$status" = "behind" ]; then
+              # Revisi ke-39: keadaan ketiga yang selama ini jatuh ke `else`.
+              # 'behind' = ujung branch ada DI BELAKANG pin - upstream force-push
+              # mundur, atau branch-nya di-reset. Yang membuatnya berbahaya sama
+              # persis dengan jalur API-gagal revisi ke-34: ia berbunyi
+              # menenangkan. Untuk 'behind' API compare mengembalikan .files
+              # KOSONG, jadi n_berkas=0 dan kena=0, jadi vonisnya dulu keluar
+              # "**AMAN dinaikkan** - 0 file, nol menyentuh bagian yang diaudit"
+              # lengkap dengan baris salin-tempel - padahal yang disuruh salin
+              # adalah SHA yang LEBIH TUA dari pin sekarang. Dan keterangannya
+              # berbunyi "tertinggal 0 commit", karena ahead_by memang 0.
+              ket="**MUNDUR** (ujung branch di belakang pin, mundur $mundur)"
+              echo 1 > /tmp/perlu_audit
+              aman=0
+            else
+              ket="tertinggal $maju commit"
+            fi
+
+            # API compare MEMOTONG .files di 300 berkas (terbukti: torvalds/linux
+            # v5.10...v5.11 -> total_commits 10000, .commits 250, .files 300,
+            # dan ?page=2 mengembalikan 0 berkas). Jadi untuk drift besar, "nol
+            # file sensitif" cuma berarti "nol di antara 300 pertama" - berkas
+            # ke-301 bisa saja fs/ atau kernel/ dan vonis AMAN-nya bohong.
+            # Karena itu daftar yang mentok di 300 tidak pernah dinilai AMAN.
+            if [ "$status" = "behind" ]; then
+              # Wajib cabang pertama: untuk 'behind' daftar file kosong, jadi
+              # dua cabang di bawah ini sama-sama lolos dan menjatuhkan vonis
+              # AMAN atas hitungan yang tidak pernah diisi API.
+              vonis="**PERLU AUDIT** - upstream mundur; \"menaikkan\" pin ini justru MENURUNKANNYA"
+              echo 1 > /tmp/perlu_audit
+              aman=0
+            elif [ "$n_berkas" -ge 300 ]; then
+              vonis="**PERLU AUDIT** - daftar file terpotong di $n_berkas (batas API), $kena sensitif di antara yang terlihat"
+              echo 1 > /tmp/perlu_audit
+              aman=0
+            elif [ "$kena" -gt 0 ]; then
+              vonis="**PERLU AUDIT** - $kena file sensitif"
+              echo 1 > /tmp/perlu_audit
+              aman=0
+            else
+              vonis="AMAN dinaikkan - $n_berkas file, nol menyentuh bagian yang diaudit"
+            fi
+
+            # REVISI KE-43 - ROBOT INI TADINYA SATU-SATUNYA PEMBACA pins.env
+            # YANG BUTA TERHADAP '# TAHAN'. preflight.sh membacanya sejak
+            # revisi ke-38, naikkan-pin.yml sejak ke-39, pincheck sejak ke-40 -
+            # dan yang tertinggal justru yang laporannya dibaca tiap hari.
+            # Akibatnya persis kerusakan revisi ke-40 di pincheck: keputusan
+            # "SHA ini sudah diaudit dan DITOLAK" diteriakkan ulang tiap pagi
+            # sebagai pekerjaan yang belum dikerjakan. Vonisnya memang tidak
+            # sampai berbunyi AMAN (diff kumulatif dari pin tetap menyentuh
+            # file sensitif), jadi baris salin-tempelnya tidak pernah terbit -
+            # tapi laporan yang selalu merah tanpa menyebut bahwa putusannya
+            # sudah ada sama tidak bergunanya dengan laporan yang basi.
+            #
+            # Dicocokkan ke SHA, bukan ke nama komponen, dengan alasan yang
+            # sama seperti di pincheck dan naikkan-pin.yml: nama pendek di
+            # baris TAHAN ("SUSFS") bukan nama variabel pins.env ("SUSFS_PIN").
+            # Penahanan yang SHA-nya milik repo lain dijawab 404 oleh compare
+            # dan dilewati - repo itu sendiri yang menjawab, jadi tidak perlu
+            # salinan ketujuh dari tabel komponen.
+            #
+            # Kedaluwarsanya mengikuti aturan revisi ke-41: penahanan hanya
+            # lepas kalau commit-nya benar-benar jatuh dari cabang, BUKAN
+            # begitu upstream bergerak maju. Selama SHA yang ditahan masih
+            # leluhur HEAD, kodenya ikut terbawa kalau pin dinaikkan.
+            tahan_info=""
+            # Revisi ke-47: `tahan_info` saja tidak cukup untuk memilih kalimat
+            # penutup laporan - ia juga terisi saat penahanan TAK BISA DINILAI,
+            # yang vonisnya PERLU AUDIT, bukan DITAHAN. Flag ini menyala hanya
+            # di cabang DITAHAN yang benar-benar terbukti.
+            ditahan=0
+            while read -r baris_tahan; do
+              [ -n "$baris_tahan" ] || continue
+              sha_tahan=$(printf '%s' "$baris_tahan" | grep -oE '[0-9a-f]{40}' | head -1)
+              relasi=""
+              if [ "$sha_tahan" = "$head" ]; then
+                relasi="HEAD PERSIS SHA yang ditahan"
+              else
+                cmp_tahan=$(gh api "repos/$repo/compare/${sha_tahan}...${head}" 2>/dev/null || true)
+                st_tahan=$(printf '%s' "$cmp_tahan" | jq -r '.status // empty' 2>/dev/null || true)
+                # Penjaga bentuk, bukan penjaga kosong: badan error GitHub PUNYA
+                # field .status berisi kode HTTP sebagai string (revisi ke-41).
+                case "$st_tahan" in
+                  404) continue ;;
+                  ahead|behind|identical|diverged) ;;
+                  *)
+                    vonis="**PERLU AUDIT** - penahanan \`${sha_tahan:0:9}\` TAK BISA DINILAI (compare menjawab '${st_tahan:-kosong}')"
+                    echo 1 > /tmp/perlu_audit
+                    aman=0
+                    tahan_info="$baris_tahan"
+                    break
+                    ;;
+                esac
+                mundur_tahan=$(printf '%s' "$cmp_tahan" | jq -r '.behind_by // empty' 2>/dev/null || true)
+                if { [ "$st_tahan" = "ahead" ] || [ "$st_tahan" = "identical" ]; } && [ "$mundur_tahan" = "0" ]; then
+                  relasi="SHA itu masih LELUHUR HEAD ($st_tahan, behind_by 0) - kodenya ikut terbawa"
+                fi
+              fi
+              [ -n "$relasi" ] || continue
+              vonis="**DITAHAN** - audit sudah MENOLAK \`${sha_tahan:0:9}\`; $relasi"
+              echo 1 > /tmp/perlu_audit
+              aman=0
+              tahan_info="$baris_tahan"
+              ditahan=1
+              break
+            done < <(grep -E "^# TAHAN [A-Za-z0-9_-]+ [0-9a-f]{40}([[:space:]].*)?$" "$WF" || true)
+
+            printf '| %s | `%s` | `%s` | %s | %s |\n' \
+              "$nama" "${pin:0:9}" "${head:0:9}" "$ket" "$vonis" >> "$TABEL"
+
+            {
+              printf '\n### %s (`%s`)\n\n' "$nama" "$repo"
+              printf -- '- naik: `%s` -> `%s` (%s commit)\n' "${pin:0:9}" "${head:0:9}" "$maju"
+              printf -- '- file tersentuh: %s, yang sensitif (`%s`): **%s**\n' "$n_berkas" "$sensitif" "$kena"
+              if [ -n "$hilang_baris" ]; then printf -- '%s\n' "$hilang_baris"; fi
+              if [ "$n_berkas" -ge 300 ]; then
+                printf -- '- **daftar file terpotong di 300 oleh API compare** - jumlah sensitif di atas TIDAK bisa dipakai; buka diff-nya sendiri.\n'
+              fi
+              if [ "$kena" -gt 0 ]; then
+                printf -- '- file sensitifnya:\n'
+                echo "$berkas" | grep -E "$sensitif" | head -20 | sed 's/^/  - `/; s/$/`/'
+                # Revisi ke-90: daftar dipotong di 20 tanpa tanda, jadi KSU
+                # "sensitif: 21" cuma menampilkan 20 nama dan berkas ke-21
+                # (kernel/tools/kernel_compat.mk) hilang diam-diam dari laporan.
+                if [ "$kena" -gt 20 ]; then
+                  printf -- '  - ... dan %s lagi (daftar dipotong di 20; lengkapnya di diff)\n' "$((kena - 20))"
+                fi
+              fi
+              printf -- '- diff: https://github.com/%s/compare/%s...%s\n' "$repo" "$pin" "$head"
+              if [ -n "$tahan_info" ]; then
+                printf -- '- **baris penahanan yang mengunci kenaikan ini** (ada di `%s`):\n' "$WF"
+                printf -- '  ```\n  %s\n  ```\n' "$tahan_info"
+                printf -- '  Tombol "Naikkan pin" MENOLAK kenaikan ini tanpa peduli `paksa`. Jalan\n'
+                printf -- '  keluarnya cuma audit ULANG lalu menghapus baris itu dari `%s`.\n' "$WF"
+              fi
+              # Revisi ke-37 - DUA CACAT DI SATU BARIS, keduanya sampai ke produksi
+              # (issue #2 masih menyimpan buktinya).
+              #
+              # 1. Baris ini dulu mencetak SHA versi pendek: "ganti `833edb0e8` ->
+              #    `b22a46e6e` di `pins.env`". Padahal penjaga bentuk di step "Muat
+              #    pins.env" menuntut PERSIS 40 hex. Siapa pun yang menuruti kalimat
+              #    ini apa adanya - menyalin `b22a46e6e` lalu commit - menghasilkan
+              #    pins.env yang ditolak build dengan "tidak berbentuk NAMA=<40 hex
+              #    huruf kecil>". Satu-satunya kalimat di seluruh laporan yang
+              #    menyuruh berbuat sesuatu, dan ia tidak bisa diikuti. Yang
+              #    menyelamatkan selama ini cuma kebetulan: dua kenaikan yang pernah
+              #    terjadi dikerjakan dari sini dengan SHA penuh, bukan dari laporan.
+              #    Versi pendek tetap dipakai di baris "naik:" di atas - di sana ia
+              #    memang cuma tampilan, tidak untuk disalin.
+              #
+              # 2. Kalimatnya lahir di revisi ke-26, waktu menyunting berkas memang
+              #    satu-satunya cara. Sejak revisi ke-27 ada tombol "Naikkan pin"
+              #    yang men-triase dulu (menolak kalau menyentuh file sensitif) dan
+              #    jalan dari HP tanpa menyentuh berkas apa pun. Laporan ini tidak
+              #    pernah menyebutnya, jadi ia membimbing pembacanya ke jalur yang
+              #    lebih berbahaya justru ketika jalur aman sudah ada.
+              #
+              # 3. Revisi ke-38: kedua baris di bawah dulu dicetak untuk SETIAP
+              #    baris yang drift, termasuk yang vonisnya sendiri **PERLU
+              #    AUDIT** atau **ORPHAN**. Jadi laporan ini menutup satu pintu
+              #    lalu membukakan pintu sebelahnya: tombol "Naikkan pin"
+              #    men-triase dan MENOLAK kenaikan yang menyentuh file sensitif
+              #    (kecuali `paksa` dicentang), tapi "cara manual" di bawahnya
+              #    menyerahkan baris `NAMA=<40 hex>` yang siap disalin ke
+              #    `pins.env` - dan jalur itu tidak melewati triase apa pun.
+              #    Vonisnya benar, penjaganya benar, tapi kalimat terakhirnya
+              #    mengajari cara melewati keduanya. Ditemukan saat SUSFS
+              #    f15603b24 (regresi NULL-deref upstream di `__lookup_hash`)
+              #    divonis PERLU AUDIT dan laporan yang sama tetap menawarkan
+              #    baris salin-tempelnya.
+              #    Sekarang baris salin-tempel hanya muncul untuk vonis AMAN.
+              if [ "$aman" = 1 ]; then
+                printf -- '- cara menaikkan (disarankan): Actions -> **Naikkan pin** -> komponen `%s` -> Run.\n' "$nama"
+                printf -- '  Tombol itu men-triase dulu dan menolak sendiri kalau menyentuh file sensitif.\n'
+                printf -- '- cara manual: di `%s`, ganti baris itu jadi persis - SHA WAJIB 40 hex penuh:\n' "$WF"
+                printf -- '  ```\n  %s=%s\n  ```\n' "${pola_nama}" "$head"
+              elif [ "$ditahan" = 1 ]; then
+                # 4. Revisi ke-47: cabang ini dulu ikut memakai kalimat "kalau
+                #    audit itu sudah dikerjakan dan hasilnya lolos ... centang
+                #    `paksa`". Untuk vonis DITAHAN kalimat itu SALAH DUA KALI:
+                #    auditnya memang sudah dikerjakan dan hasilnya MENOLAK, dan
+                #    `paksa` tidak melewati baris `# TAHAN` - naikkan-pin.yml
+                #    menolaknya lebih dulu. Laporan yang sama bahkan sudah
+                #    mengatakan itu beberapa baris di atas (blok "baris
+                #    penahanan yang mengunci kenaikan ini"), jadi satu laporan
+                #    memuat dua kalimat yang bertentangan dan yang keliru justru
+                #    yang terakhir dibaca. Ketahuan saat KSU e88c7eeec ditahan
+                #    di revisi ke-47.
+                printf -- '- **JANGAN naikkan.** Vonis di atas **DITAHAN**: auditnya sudah dikerjakan dan\n'
+                printf -- '  hasilnya MENOLAK, dan baris `# TAHAN` yang mencatatnya sudah ada di `%s`.\n' "$WF"
+                printf -- '  Laporan ini karena itu tidak memberi baris salin-tempel MAUPUN jalur\n'
+                printf -- '  `paksa`: tombol "Naikkan pin" menolak kenaikan ini tanpa peduli `paksa`.\n'
+                printf -- '- satu-satunya jalan maju: audit ULANG SHA yang ditahan terhadap upstream\n'
+                printf -- '  terbaru. Kalau kali ini lolos, HAPUS baris `# TAHAN` dari `%s` lebih\n' "$WF"
+                printf -- '  dulu - selama baris itu ada, setiap jalur kenaikan tetap buntu.\n'
+              else
+                printf -- '- **JANGAN naikkan dulu.** Vonis di atas bukan AMAN, jadi laporan ini sengaja\n'
+                printf -- '  TIDAK memberi baris salin-tempelnya: menyalinnya ke `%s` akan melewati\n' "$WF"
+                printf -- '  triase tombol "Naikkan pin", yang justru akan menolak kenaikan ini.\n'
+                printf -- '- yang harus dikerjakan lebih dulu: baca diff di atas, simulasikan di luar CI\n'
+                printf -- '  (template audit revisi ke-17), lalu catat hasilnya sebagai baris `# TAHAN`\n'
+                printf -- '  di `%s` kalau ditolak. Sejak revisi ke-43 baris itu dibaca `preflight.sh`,\n' "$WF"
+                printf -- '  `pincheck`, tombol "Naikkan pin" DAN robot ini: begitu barisnya ada,\n'
+                printf -- '  laporan besok memvonisnya **DITAHAN** selama SHA itu masih terkandung di HEAD.\n'
+                printf -- '- kalau audit itu sudah dikerjakan dan hasilnya lolos: Actions -> **Naikkan pin**\n'
+                printf -- '  -> komponen `%s` -> centang `paksa` -> Run. SHA tujuannya `%s`.\n' "$nama" "$head"
+              fi
+            } >> "$RINCI"
+          done
+
+          # Revisi ke-76: aksi GitHub (`uses:`) ikut dipantau. Sejak revisi ke-75
+          # setiap aksi dipin ke SHA commit, dan itu punya harga: tag major (v6/v7)
+          # dulu ikut maju sendiri ke rilis tambalan, SHA tidak. Tanpa baris di
+          # laporan ini, rilis keamanan sebuah aksi cuma terlihat kalau kebetulan ada
+          # yang menjalankan preflight.sh lokal - satu-satunya sumber pin di repo ini
+          # yang tidak punya pengawas harian. Aksinya dibaca dari ketiga workflow di
+          # checkout, bukan disalin ke sini, jadi daftar ini tidak bisa basi.
+          # Vonisnya bukan AMAN/PERLU AUDIT: "Naikkan pin" tidak bisa menaikkannya
+          # (GITHUB_TOKEN dilarang menulis .github/workflows/), jadi yang diminta
+          # laporan selalu sunting tangan, dan bendera sendiri AKSI_DRIFT menjaga
+          # kalimat penutup laporan tetap benar.
+          rm -f /tmp/aksi_drift
+          AKSI=$(cat .github/workflows/*.yml | tr -d '\r' |
+                   grep -oE 'uses: *[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[^ ]+( *# *v[^ ]+)?' |
+                   sed -E 's/^uses: *//; s/ *# */#/' | sort -u || true)
+          {
+            printf '\n| Aksi GitHub | Dipin | Rilis terbaru | Status |\n'
+            printf '|---|---|---|---|\n'
+          } >> "$TABEL"
+          if [ -z "$AKSI" ]; then
+            printf '| - | - | - | **POLA TAK KETEMU** - tidak ada `uses:` terbaca di .github/workflows/ |\n' >> "$TABEL"
+            echo 1 > /tmp/perlu_audit
+          fi
+          while IFS= read -r a; do
+            [ -n "$a" ] || continue
+            arepo=${a%%@*}; rest=${a#*@}; apin=${rest%%#*}; aver=""
+            case "$rest" in *'#'*) aver=${rest#*#} ;; esac
+            if ! printf '%s' "$apin" | grep -qE '^[0-9a-f]{40}$'; then
+              printf '| %s | `@%s` | - | **TIDAK DIPIN SHA** |\n' "$arepo" "$apin" >> "$TABEL"
+              {
+                printf '\n### Aksi %s\n\n' "$arepo"
+                printf -- '- dirujuk lewat `@%s`, ref yang bisa digeser pemilik aksinya tanpa jejak di repo ini.\n' "$apin"
+                printf -- '- ganti jadi `uses: %s@<40 hex> # vX.Y.Z` (SHA commit rilis terbarunya),\n' "$arepo"
+                printf -- '  lalu `bash preflight.sh` (wajib bersih) dan push.\n'
+              } >> "$RINCI"
+              echo 1 > /tmp/aksi_drift
+              continue
+            fi
+            # Sekali ulang, sama dengan panggilan HEAD di atas. Bentuk dicek dua-duanya:
+            # badan error gh api punya .tag_name kosong tapi tetap tercetak ke STDOUT.
+            tag=""; tsha=""
+            for coba in 1 2; do
+              tag=$(gh api "repos/$arepo/releases/latest" --jq .tag_name 2>/dev/null || true)
+              if printf '%s' "$tag" | grep -qE '^v[0-9][0-9A-Za-z.-]*$'; then
+                tsha=$(gh api "repos/$arepo/commits/$tag" --jq .sha 2>/dev/null || true)
+              fi
+              if printf '%s' "$tsha" | grep -qE '^[0-9a-f]{40}$'; then break; fi
+              if [ "$coba" = 1 ]; then sleep 5; fi
+            done
+            if ! printf '%s' "$tsha" | grep -qE '^[0-9a-f]{40}$'; then
+              printf '| %s | `%s` %s | - | **GAGAL AMBIL** rilis terbaru |\n' "$arepo" "${apin:0:9}" "$aver" >> "$TABEL"
+              echo 1 > /tmp/perlu_audit
+            elif [ "$apin" != "$tsha" ]; then
+              printf '| %s | `%s` %s | `%s` %s | tertinggal |\n' "$arepo" "${apin:0:9}" "$aver" "${tsha:0:9}" "$tag" >> "$TABEL"
+              echo 1 > /tmp/aksi_drift
+              {
+                printf '\n### Aksi %s\n\n' "$arepo"
+                printf -- '- dipin `%s` (%s), rilis terbaru %s = `%s`\n' "$apin" "${aver:-tanpa komentar versi}" "$tag" "$tsha"
+                printf -- '- catatan rilis: https://github.com/%s/releases/tag/%s\n' "$arepo" "$tag"
+                printf -- '- cara menaikkan: TIDAK lewat "Naikkan pin". Di arsip lokal, ganti setiap\n'
+                printf -- '  `uses: %s@%s` di ketiga workflow jadi persis:\n' "$arepo" "$apin"
+                printf -- '  ```\n  uses: %s@%s # %s\n  ```\n' "$arepo" "$tsha" "$tag"
+                printf -- '  lalu `bash preflight.sh` (wajib bersih) dan push.\n'
+              } >> "$RINCI"
+            elif [ "$aver" != "$tag" ]; then
+              printf '| %s | `%s` %s | `%s` %s | SHA benar, **komentar versi basi** |\n' "$arepo" "${apin:0:9}" "${aver:-kosong}" "${tsha:0:9}" "$tag" >> "$TABEL"
+              echo 1 > /tmp/aksi_drift
+            else
+              printf '| %s | `%s` %s | `%s` %s | di rilis terbaru |\n' "$arepo" "${apin:0:9}" "$aver" "${tsha:0:9}" "$tag" >> "$TABEL"
+            fi
+          done <<< "$AKSI"
+          AKSI_DRIFT=0
+          if [ -f /tmp/aksi_drift ]; then AKSI_DRIFT=1; fi
+
+          # WAJIB pakai if, bukan `[ -f x ] && VAR=1`: shell step di Actions jalan
+          # dengan `bash -e`, jadi test yang gagal di posisi terakhir statement
+          # akan MEMATIKAN step ini - persis di jalur "semua pin aman".
+          if [ -f /tmp/perlu_audit ]; then PERLU_AUDIT=1; fi
+          if [ -f /tmp/ada_drift ]; then ADA_DRIFT=1; fi
+
+          JUDUL="Pantau pin upstream"
+          BODY=/tmp/body.md
+          {
+            printf 'Laporan otomatis %s UTC (run `%s`).\n\n' "$(date -u '+%Y-%m-%d %H:%M')" "$GITHUB_RUN_ID"
+            cat "$TABEL"
+            if [ "$ADA_DRIFT" = "1" ] || [ "$AKSI_DRIFT" = "1" ]; then
+              printf '\n## Rincian yang bergerak\n'
+              cat "$RINCI"
+              printf '\n---\n\n'
+              if [ "$AKSI_DRIFT" = "1" ]; then
+                printf 'Ada aksi GitHub yang tertinggal dari rilis terbarunya atau tidak dipin SHA. '
+                printf 'Itu disunting tangan di ketiga workflow (lihat rinciannya), bukan lewat '
+                printf 'tombol "Naikkan pin".\n\n'
+              fi
+              if [ "$ADA_DRIFT" = "0" ]; then
+                if [ "$PERLU_AUDIT" = "1" ]; then
+                  printf 'Ada juga baris bertanda PERLU AUDIT, POLA TAK KETEMU atau GAGAL AMBIL. '
+                  printf 'Lihat kolom Status dan Vonis: laporan ini belum tentu lengkap.\n'
+                fi
+              elif [ "$PERLU_AUDIT" = "1" ]; then
+                printf 'Ada yang menyentuh bagian yang dulu diaudit (atau pin sudah orphan). '
+                printf 'Jangan naikkan itu sendiri - patch/fixer bisa ikut patah.\n'
+              else
+                printf 'Semua drift kelas **AMAN**: tidak ada file sensitif yang tersentuh. '
+                # Revisi ke-37: dulu berbunyi "Naikkan sendiri, push, lalu flash".
+                # Itu kalimat zaman revisi ke-26, sebelum tombol "Naikkan pin" ada.
+                printf 'Naikkan lewat Actions -> **Naikkan pin** (triase jalan lagi di sana '
+                printf 'sebagai jaring kedua), lalu flash kalau build hijau.\n'
+              fi
+            elif [ "$PERLU_AUDIT" = "1" ]; then
+              # Revisi ke-29: keadaan ini nyata dan dulu tidak punya kalimat sendiri.
+              printf '\nTidak ada pin yang bergerak, TAPI ada baris yang gagal dinilai '
+              printf '(POLA TAK KETEMU / GAGAL AMBIL / TAK BISA DIBANDINGKAN) atau pin '
+              printf 'yang membawa SHA yang ditahan. Lihat kolom Status dan Vonis.\n'
+            else
+              printf '\nSemua pin di HEAD dan semua aksi di rilis terbarunya. Tidak ada yang perlu dikerjakan.\n'
+            fi
+          } > "$BODY"
+
+          # Revisi ke-39 - DUA LUBANG DI SATU BARIS, keduanya melanggar satu-satunya
+          # invarian robot ini: TEPAT SATU issue berjudul "$JUDUL".
+          #
+          # 1. Panggilan ini dulu berakhir `|| true` dan hasilnya dipakai apa
+          #    adanya. Kalau `gh issue list` meleset sesaat - dan API meleset
+          #    bukan teori, itu tercatat di audit revisi ke-29 - $nomor kosong,
+          #    persis sama bentuknya dengan "tidak ada issue terbuka", lalu
+          #    cabang terakhir di bawah MEMBUAT ISSUE BARU. Hasilnya dua issue
+          #    berjudul sama, dan mulai saat itu setiap run hanya menyunting
+          #    salah satunya; yang satu lagi menganga selamanya berisi laporan
+          #    beku. Ini kelas revisi ke-34 lagi: kegagalan `gh` dibaca sebagai
+          #    jawaban yang sah. Penjaganya harus BENTUK - hasilnya wajib array
+          #    JSON - dan kalau tidak terbaca, lebih baik step ini mati berisik
+          #    daripada menerbitkan laporan kembar yang diam-diam.
+          # 2. `--search "$JUDUL in:title"` memakai indeks pencarian GitHub, yang
+          #    telat beberapa detik sampai beberapa menit sesudah issue dibuat.
+          #    Robot ini sengaja punya tiga pemicu yang bisa beruntun rapat
+          #    (push pins.env, panggilan dari naikkan-pin, jadwal), jadi run
+          #    kedua bisa datang sebelum issue run pertama terindeks - dan
+          #    membuat kembarannya. Daftar issue terbuka repo ini cukup pendek
+          #    untuk disaring jq, yang membaca keadaan sebenarnya, bukan indeks.
+          issue_json=$(gh issue list --state open --limit 100 --json number,title 2>/dev/null || true)
+          if ! printf '%s' "$issue_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+            echo "ERROR: daftar issue tidak terbaca (jawaban: ${issue_json:0:120})."
+            echo "Dihentikan dengan sengaja: menebak \"belum ada issue\" di sini berarti"
+            echo "membuat issue kembar yang tidak akan pernah disegarkan lagi."
+            echo "--- laporan yang seharusnya terbit ---"
+            cat "$BODY"
+            exit 1
+          fi
+          cocok=$(printf '%s' "$issue_json" | jq -r --arg j "$JUDUL" '[.[]|select(.title==$j)]|length')
+          nomor=$(printf '%s' "$issue_json" | jq -r --arg j "$JUDUL" \
+            '[.[]|select(.title==$j)]|sort_by(.number)|.[0].number // empty')
+          if [ "$cocok" -gt 1 ]; then
+            echo "PERINGATAN: ada $cocok issue terbuka berjudul \"$JUDUL\" - invarian satu-issue"
+            echo "sudah pernah dilanggar. Yang disunting run ini nomor terkecil (#$nomor);"
+            echo "tutup sisanya dengan tangan."
+          fi
+
+          # Revisi ke-29 - LUBANG YANG DITAMBAL DI SINI:
+          # syaratnya dulu cuma ADA_DRIFT. Padahal PERLU_AUDIT bisa menyala TANPA
+          # drift sama sekali, lewat tiga jalur di atas: POLA TAK KETEMU (nama
+          # variabel di pins.env berubah), GAGAL AMBIL (repo hilang/privat, atau
+          # sekadar API meleset sesaat - ini betul-betul terjadi saat audit
+          # revisi ke-29), dan TAK BISA DIBANDINGKAN. Di ketiga keadaan itu robot
+          # dulu mencetak "Semua pin di HEAD", tidak membuka issue apa pun, DAN
+          # menutup issue yang sedang terbuka dengan alasan "kembali di HEAD" -
+          # justru membuang satu-satunya laporan yang bilang ada yang rusak.
+          # Sekarang: diam hanya kalau benar-benar tidak ada drift DAN tidak ada
+          # baris yang gagal dinilai.
+          if [ "$ADA_DRIFT" = "0" ] && [ "$PERLU_AUDIT" = "0" ] && [ "$AKSI_DRIFT" = "0" ]; then
+            if [ -n "$nomor" ]; then
+              gh issue comment "$nomor" --body-file "$BODY"
+              gh issue close "$nomor" --comment "Semua pin kembali di HEAD, ditutup otomatis."
+            fi
+            echo "Semua pin di HEAD - tidak ada issue yang dibuka."
+          elif [ -n "$nomor" ]; then
+            gh issue edit "$nomor" --body-file "$BODY"
+            echo "Issue #$nomor diperbarui."
+          else
+            gh issue create --title "$JUDUL" --body-file "$BODY"
+            echo "Issue baru dibuat."
+          fi
+
+          cat "$BODY"
