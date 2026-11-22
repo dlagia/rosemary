@@ -1619,6 +1619,10 @@
 #     uji-susfs-xxksu terbit sebagai rilis biasa dan sempat jadi "Latest".
 #     Di cabang ini setiap rilis di luar refs/heads/main = --prerelease
 #     --latest=false.
+#     Fixer SUSFS_LOGI_RL/LOGE_RL di main tidak pernah cocok (upstream
+#     menulis '#define SUSFS_LOGI(fmt, ...) ' dengan spasi di ujung); main
+#     lolos hanya karena ENABLE_LOG=y. Dengan ENABLE_LOG mati build pertama
+#     cabang ini gagal di fs/susfs.c:112. Kini regex + assert wajib.
 # (e) Status: belum diflash. Mundur: rilis build-20261122-034128 (bf2adcd).
 # ============================================================
 
@@ -2478,12 +2482,20 @@ jobs:
                   s = s.replace(CALL_BAD, CALL_OK, 1)
                   changed = True
               # Pastikan SUSFS_LOGI_RL/SUSFS_LOGE_RL ada juga saat ENABLE_LOG mati.
-              rl_old = "#else\n#define SUSFS_LOGI(fmt, ...)\n#define SUSFS_LOGE(fmt, ...)\n#endif\n"
-              rl_new = ("#else\n#define SUSFS_LOGI(fmt, ...)\n#define SUSFS_LOGE(fmt, ...)\n"
-                        "#define SUSFS_LOGI_RL(fmt, ...)\n#define SUSFS_LOGE_RL(fmt, ...)\n#endif\n")
-              if rl_old in s:
-                  s = s.replace(rl_old, rl_new, 1)
+              # Upstream menulis '#define SUSFS_LOGI(fmt, ...) ' dengan spasi di
+              # ujung, jadi anchor string persis tidak pernah cocok dan build
+              # ENABLE_LOG=n gagal di SUSFS_LOGI_RL (main tak kena karena
+              # ENABLE_LOG=y). Dicocokkan dengan regex, lalu diwajibkan di bawah.
+              rl_pat = re.compile(r'^(#else\n#define SUSFS_LOGI\(fmt, \.\.\.\)[ \t]*\n'
+                                  r'#define SUSFS_LOGE\(fmt, \.\.\.\)[ \t]*\n)(#endif\n)', re.M)
+              n_rl = len(rl_pat.findall(s))
+              if n_rl == 1:
+                  s = rl_pat.sub(lambda m: m.group(1) + "#define SUSFS_LOGI_RL(fmt, ...)\n"
+                                 "#define SUSFS_LOGE_RL(fmt, ...)\n" + m.group(2), s, count=1)
+                  print("susfs.c: SUSFS_LOGI_RL/SUSFS_LOGE_RL kosong ditambahkan untuk ENABLE_LOG mati")
                   changed = True
+              elif s.count("#define SUSFS_LOGI_RL(") != 2:
+                  sys.exit("susfs-fix: blok #else SUSFS_LOGI/LOGE ketemu %d kali (harus 1)" % n_rl)
               # 4.14 kfree_rcu(NULL, rcu) = NULL deref panic (NULL check baru ada di 5.x).
               # Upstream v2.4.0 sudah menjaga priority_uid_filter tapi lupa di sus_path_uid_filter.
               kfr_bad = "\tsynchronize_rcu();\n\tkfree_rcu(old_bitmap, rcu);\n"
@@ -2586,6 +2598,9 @@ jobs:
           su = rd('fs/susfs.c')
           if '#include <linux/security.h>' not in su: err.append("fs/susfs.c tanpa <linux/security.h>")
           if CALL_BAD in su: err.append("fs/susfs.c call 2-argumen")
+          for _m in ('SUSFS_LOGI_RL', 'SUSFS_LOGE_RL'):
+              if su.count('#define %s(' % _m) != 2:
+                  err.append(f"fs/susfs.c {_m} tidak terdefinisi di kedua cabang ENABLE_LOG")
           if "\tsynchronize_rcu();\n\tkfree_rcu(old_bitmap, rcu);\n" in su:
               err.append("fs/susfs.c masih ada kfree_rcu(old_bitmap, rcu) tanpa if (old_bitmap)")
           fd = rd('fs/proc/fd.c')
