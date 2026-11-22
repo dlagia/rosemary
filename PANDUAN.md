@@ -159,8 +159,9 @@ klik step yang bertanda X:
 - **`HTTP 403: Resource not accessible by integration` di step "Terbitkan
   Release" atau tombol "Tandai terbukti boot"**: isi `.github/workflows/`
   di commit yang dibangun berbeda dari `main` saat itu, misalnya ada push
-  workflow lain selagi build jalan, atau rilis berasal dari cabang uji yang
-  sudah dihapus. Token Actions tidak boleh membuat tag di commit seperti itu.
+  workflow lain selagi build jalan, rilis berasal dari cabang uji yang
+  sudah dihapus, atau workflow di `main` sudah diubah sesudah rilis itu
+  dibangun (paling sering saat menandai rilis lama). Token Actions tidak boleh membuat tag di commit seperti itu.
   Kernel tidak rusak. Untuk build: tekan *Run workflow* lagi di `main`, dan
   jangan push perubahan workflow selama build berjalan. Untuk tag titik:
   ikuti perintah `gh api ... git/refs` yang dicetak tombol itu, lalu

@@ -68,12 +68,15 @@ jobs:
             echo "Tag $TITIK sudah ada - dibiarkan."
           else
             # GITHUB_TOKEN tidak punya izin `workflows`: GitHub menolak (403)
-            # membuat ref ke commit yang mengubah .github/workflows/ dan tidak
-            # lagi ada di cabang mana pun (mis. rilis uji dari cabang yang
-            # sudah dihapus). Tag itu dibuat pemilik sekali, lalu tombol ini
-            # dijalankan ulang (cabang "sudah ada" di atas melanjutkannya).
+            # membuat ref ke commit yang isi .github/workflows/-nya berbeda
+            # dari main sekarang. Itu terjadi untuk rilis dari cabang uji yang
+            # sudah dihapus, DAN untuk rilis main mana pun begitu workflow di
+            # main diubah sesudahnya (terbukti 2026-11-22: rilis
+            # build-20261122-115328 @ aba45f0 ditolak sesudah 28711fb). Tag
+            # itu dibuat pemilik sekali, lalu tombol ini dijalankan ulang
+            # (cabang "sudah ada" di atas melanjutkannya).
             if ! gh api "repos/${GH_REPO}/git/refs" -f ref="refs/tags/${TITIK}" -f sha="$SHA" >/dev/null; then
-              echo "::error::Tag $TITIK tidak bisa dibuat oleh GITHUB_TOKEN (commit ${SHA:0:9} kemungkinan dari cabang uji yang sudah dihapus dan mengubah workflow)."
+              echo "::error::Tag $TITIK tidak bisa dibuat oleh GITHUB_TOKEN: isi .github/workflows/ di commit ${SHA:0:9} berbeda dari ${GITHUB_REF_NAME} sekarang (workflow diubah sesudah rilis ini, atau rilis dari cabang uji yang sudah dihapus)."
               echo "Buat sekali dengan akun pemilik: gh api repos/${GH_REPO}/git/refs -f ref=refs/tags/${TITIK} -f sha=${SHA}"
               echo "lalu jalankan tombol ini lagi."
               exit 1
