@@ -1,6 +1,8 @@
 # ============================================================
 # Workflow GitHub Actions: Build Kernel Xiaomi Rosemary (kernel 4.14)
-# Sejak revisi rosemary-6 (2026-11-22): xxKSU (backslashxx/KernelSU) + SUSFS
+# Sejak revisi rosemary-7 (2026-11-22): source kernel Linux 4.14.357 (merge
+# OpenELA kernel-lts ke rosemary-13; uname tetap 4.14.186-perf) dengan
+# xxKSU (backslashxx/KernelSU) + SUSFS
 # v2.4.0 ala Najip (patch 4.14 JackA1ltman + glue parent-kernel + patch
 # lifecycle 0002 Najip, TANPA BakaSU) + NoMount; fgetpriority dicabut,
 # opsi SUSFS mengikuti JackA1ltman (11 opsi =y). Build dari cabang selain
@@ -1633,6 +1635,29 @@
 # SUSFS_LOG*_RL yang benar-benar cocok, is_ksu_domain rujukan kuat, dan rilis
 # cabang non-main = prerelease. Mundur: rilis build-20261122-082156
 # (rosemary-5, 3306ddc) atau build-20261122-034128 (rosemary-4, bf2adcd).
+#
+# REVISI ROSEMARY-7 (2026-11-22) - permintaan pemilik: kernel LTS 4.14.357
+# masuk main sesudah prerelease build-20261122-105230 terbukti boot normal.
+# (a) KERNEL_PIN 602782dab (Linux 4.14.332) -> 9b1525188: merge tag
+#     v4.14.357-openela (openela/kernel-lts, rilis 4.14 terakhir; kernel.org
+#     berhenti di 4.14.336) ke rosemary-13, 2100 commit, 26 blok/17 berkas
+#     konflik diselesaikan (binder, binder_alloc, mtk_dsi, mmc, f2fs, net,
+#     selinuxfs, trace sched, dm-core, ib_srpt; rincian di pesan commit
+#     0c1a2cb65), lalu 9b1525188 mengosongkan EXTRAVERSION = -openela (penjaga
+#     EXTRAVERSION di step Compile menghentikan build uji pertama). rosemary-13
+#     di-fast-forward, tanpa force push. Semua step tambalan (SUSFS + fixer,
+#     SUBLEVEL 357 -> 186, memori, CVE-2026-43499 rtmutex, WARN blk-core)
+#     lolos di tree baru; perbaikan rtmutex OpenELA 5635c800bb01 berbeda dan
+#     cocok dengan tambalan CVE kita. Log build = rosemary-6.
+# (b) KSU_PIN 540360f50 (ORPHAN, rebase 28/28) -> 540ad4ca3 (HEAD): diff
+#     kernel/ = selinux_hide (konteks ksu ditolak -EINVAL tanpa parse +
+#     do_useless_alloc 4096 B, menutup "ksu_types timing" Duck Detector,
+#     rujukan Duck PR #451) + branch_link_hook_arm64 khusus < 3.19 (tidak
+#     terpakai). Keenam berkas sasaran 0002 Najip byte-identik.
+# (c) NAJIP_PIN 018c4deb0 -> 716f9607b (HEAD): hanya workflow/skrip
+#     NoMount LKM Najip; 0002 tetap sha256 c4f70fb4e.
+# (d) Delapan pin = HEAD upstream, tanpa ORPHAN. Mundur: rilis
+#     build-20261122-100046 (rosemary-6, kernel 4.14.332).
 # ============================================================
 
 name: Build Kernel Rosemary (xxKSU + SUSFS + NoMount)

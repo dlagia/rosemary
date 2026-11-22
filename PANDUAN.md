@@ -1,6 +1,7 @@
 # Panduan dlagia/rosemary
 
-Kernel Xiaomi rosemary (Redmi Note 10S, MT6785, Linux 4.14) dengan
+Kernel Xiaomi rosemary (Redmi Note 10S, MT6785, Linux 4.14.357 LTS hasil
+merge OpenELA kernel-lts ke source vendor) dengan
 xxKSU (backslashxx/KernelSU) + SUSFS v2.4.0 ala Najip + NoMount,
 dibangun otomatis
 oleh GitHub Actions. `uname -r` = `4.14.186-perf`, sama dengan kernel stok

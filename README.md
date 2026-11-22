@@ -1,10 +1,10 @@
 # rosemary
 
-Kernel Xiaomi rosemary (Redmi Note 10S, Linux 4.14) dengan xxKSU
+Kernel Xiaomi rosemary (Redmi Note 10S, Linux 4.14.357 LTS dari OpenELA) dengan xxKSU
 (backslashxx/KernelSU) + SUSFS v2.4.0 ala Najip (glue parent-kernel, opsi
 SUSFS = JackA1ltman) + NoMount, `uname -r` = `4.14.186-perf` (sama dengan kernel stok),
-dibangun otomatis oleh GitHub Actions. Revisi rosemary-6: susunan ini
-(dulu cabang `susfs-najip`) kini menjadi `main`; rilisnya belum diflash.
+dibangun otomatis oleh GitHub Actions. `uname` sengaja tetap 4.14.186 agar
+cocok dengan fsck.f2fs dan modul vendor stok.
 
 - Manager: APK dari rilis [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU/releases).
   Manager BakaSU tidak dikenali kernel ini.
