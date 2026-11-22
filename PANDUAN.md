@@ -1,10 +1,10 @@
 # Panduan dlagia/rosemary
 
 Kernel Xiaomi rosemary (Redmi Note 10S, MT6785, Linux 4.14) dengan
-xxKSU (backslashxx/KernelSU) + SUSFS (v2.4.0 via glue parent-kernel) +
-NoMount, dibangun otomatis oleh GitHub Actions. `uname -r` =
-`4.14.186-perf`, sama dengan kernel stok (step "Samakan SUBLEVEL dengan
-versi stok").
+xxKSU (backslashxx/KernelSU) + SUSFS v2.4.0 ala Najip + NoMount,
+dibangun otomatis
+oleh GitHub Actions. `uname -r` = `4.14.186-perf`, sama dengan kernel stok
+(step "Samakan SUBLEVEL dengan versi stok").
 Panduan ini ditulis supaya semua pekerjaan rutin bisa dikerjakan sendiri,
 tanpa bantuan AI.
 
@@ -30,16 +30,25 @@ Komponen yang di-pin:
 | `KERNEL_PIN` | dlagia/android_kernel_xiaomi_rosemary | rosemary-13 |
 | `KSU_PIN` | backslashxx/KernelSU (xxKSU) | master |
 | `SUSFS_PIN` | JackA1ltman/NonGKI_Kernel_Build_2nd (SUSFS 4.14) | mainline |
+| `NAJIP_PIN` | Najip/KernelSU_SUSFS_Samsung_SM-A325X (lifecycle 0002) | main |
 | `NOMOUNT_PIN` | maxsteeel/nomount | dev |
 | `NOMOUNT_LOADER_PIN` | maxsteeel/nomount | master |
 | `AK3_PIN` | vlxlxlv/AnyKernel3 | mt6781 |
 | `CLANG_PIN` | kdrag0n/proton-clang | master |
 
-SUSFS aktif lewat patch 4.14 JackA1ltman + glue parent-kernel di atas xxKSU
-(tanpa BakaSU). Penandaan `TIF_PROC_UMOUNTED` untuk fitur SUSFS (`SUS_MOUNT`,
-`SUS_MAP`, `OPEN_REDIRECT`, `SUS_KSTAT`, `SUS_PATH_LOOP`) berjalan otomatis pada
-aplikasi non-root turunan zygote, termasuk saat `kernel_umount` dimatikan atau
-hanya memakai NoMount tanpa metamodule overlayfs.
+SUSFS aktif lewat patch 4.14 JackA1ltman + glue parent-kernel di atas xxKSU,
+disusun seperti Najip (tanpa BakaSU, tanpa hook manual). Hook lifecycle di
+KernelSU diambil dari patch `0002-susfs-lifecycle-calls.patch` milik Najip.
+Penandaan `TIF_PROC_UMOUNTED` (dipakai `SUS_MOUNT`, `SUS_MAP`,
+`OPEN_REDIRECT`, `SUS_KSTAT`, `SUS_PATH_LOOP`) tetap jalan pada aplikasi
+non-root turunan zygote walau `kernel_umount` mati atau hanya memakai
+NoMount. Opsi SUSFS mengikuti JackA1ltman: 11 opsi `=y`, termasuk
+`PRIORITY_UID_FILTER` (pengganti fgetpriority, yang dicabut) dan `ENABLE_LOG`.
+
+Hanya build dari `main` yang terbit sebagai rilis biasa ("Latest"). Build
+dari cabang lain (kalau suatu saat dibuat untuk uji) selalu *prerelease* dan
+tidak pernah jadi "Latest", jadi gerbang build `main` dan tombol "Tandai
+terbukti boot" tidak terganggu.
 
 ## Manager
 

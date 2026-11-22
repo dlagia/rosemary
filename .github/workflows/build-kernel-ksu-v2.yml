@@ -1,8 +1,10 @@
 # ============================================================
 # Workflow GitHub Actions: Build Kernel Xiaomi Rosemary (kernel 4.14)
-# Sejak revisi rosemary-5 (2026-11-22): xxKSU (backslashxx/KernelSU) +
-# SUSFS v2.4.0 (patch 4.14 JackA1ltman + glue parent-kernel, TANPA BakaSU) +
-# NoMount; fgetpriority dicabut (diganti CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y).
+# Sejak revisi rosemary-6 (2026-11-22): xxKSU (backslashxx/KernelSU) + SUSFS
+# v2.4.0 ala Najip (patch 4.14 JackA1ltman + glue parent-kernel + patch
+# lifecycle 0002 Najip, TANPA BakaSU) + NoMount; fgetpriority dicabut,
+# opsi SUSFS mengikuti JackA1ltman (11 opsi =y). Build dari cabang selain
+# main selalu prerelease dan tidak pernah jadi "Latest".
 # Seluruh riwayat BakaSU/ReSukiSU + SUSFS di bawah (revisi ke-1 s/d ke-117)
 # dibiarkan sebagai catatan sejarah; langkah-langkahnya sudah dicabut dari
 # badan workflow. Titik mundur BakaSU + SUSFS = titik AD (revisi ke-117,
@@ -11,8 +13,9 @@
 # Fitur yang terpasang:
 # 1. xxKSU (backslashxx/KernelSU, branch master) lewat setup.sh resminya,
 #    hook lewat tabel syscall (CONFIG_KSU_TAMPER_SYSCALL_TABLE=y) + LSM,
-#    plus 6 hook lifecycle SUSFS ringan di KernelSU/kernel (tanpa hook manual
-#    di fs/exec.c, fs/open.c, fs/stat.c, security/security.c)
+#    plus hook lifecycle SUSFS dari patch 0002 Najip (NAJIP_PIN) di
+#    KernelSU/kernel (tanpa hook manual di fs/exec.c, fs/open.c, fs/stat.c,
+#    security/security.c)
 # 2. SUSFS v2.4.0 (JackA1ltman/NonGKI_Kernel_Build_2nd patch 4.14 + glue
 #    parent-kernel: fs/susfs_ksu_glue.c, fs/xxksu_susfs_lifecycle.c,
 #    fs/Kconfig.susfs, kernel/reboot.c khusus SUSFS_MAGIC dari root)
@@ -23,7 +26,7 @@
 #    eks-fjrXTR)
 # 7. BBR + fq, setelan memori (swappiness 100, zram lz4), tambalan
 #    CVE-2026-43499 dan WARN flush_work blk-core
-# Ketujuh sumber dipin SHA di pins.env; riwayat revisi di bawah dan di
+# Kedelapan sumber dipin SHA di pins.env; riwayat revisi di bawah dan di
 # pins.env.
 #
 # Repo dlagia/rosemary: revisi ke-1 s/d ke-133c dikerjakan di repo
@@ -1584,36 +1587,52 @@
 # (c) Mundur: rilis build-20261121-174611 repo ini (revisi rosemary-3,
 #     commit 7cb30e1; belum diflash) atau titik AO (KSU f27e1f0d3).
 #
-# REVISI ROSEMARY-5 (2026-11-22) - xxKSU + SUSFS v2.4.0 via glue parent-kernel;
-# fgetpriority dicabut. Tanpa BakaSU dan tanpa Build-Kernel_scripts.
-# (a) SUSFS_PIN=8af9026a9 menggantikan FGETPRIORITY_PIN (jumlah pin tetap 7).
-#     Patch 4.14 JackA1ltman (21 berkas, v2.4.0 NON-GKI) disanitasi, diterapkan
-#     ke pohon kernel, diperbaiki lewat fixer task_mmu + fixer 4.14, lalu
-#     disambung ke xxKSU (syscall_table + LSM) lewat glue parent-kernel:
-#       - 6 hook lifecycle ringan di KernelSU/kernel (setuid_hook, kernel_umount,
-#         app_profile, boot_event, throne_tracker, ksu.c);
-#       - include/linux/xxksu_parent_bridge.h, fs/Kconfig.susfs,
-#         fs/susfs_ksu_glue.c (dispatcher 17 CMD_SUSFS + isi nyata susfs_ksu_sid
-#         & susfs_priv_app_sid), fs/xxksu_susfs_lifecycle.c;
-#       - kernel/reboot.c hanya mencegat (magic1 == 0xDEADBEEF && magic2 ==
-#         SUSFS_MAGIC && uid == 0) agar tidak bentrok atau double-call dengan
-#         hook_aarch64_reboot/hook_armeabi_reboot xxKSU, dan non-root tetap
-#         mendapat -EPERM;
-#       - kernel/kallsyms.c menyembunyikan simbol xxksu_*.
-# (b) fgetpriority (step integrasi, defconfig, assert, arsip, pin-watch,
-#     naikkan-pin) dicabut permanen - diganti CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y.
-# (c) Audit runtime:
-#     - kernel_umount.c tetap memasang TIF_PROC_UMOUNTED + menjadwalkan
-#       susfs_extra_works lewat xxksu_parent_finish_umount() untuk aplikasi
-#       non-root turunan zygote meskipun kernel_umount mati atau hanya NoMount
-#       (tanpa notify-module-mounted), sambil tetap menahan try_umount bila
-#       kernel_umount mati / belum ada modul mount;
-#     - fs/stat.c menambah else sebelum STATX_SUS_KSTAT_FUSE dan membersihkan
-#       bit internal STATX_SUS_KSTAT* dari stat->result_mask sebelum keluar dari
-#       vfs_getattr_nosec() agar tidak bocor ke statx()->stx_mask userspace;
-#     - security/selinux/avc.c menjaga susfs_ksu_sid != 0 dan kfree(scontext).
-# (d) Mundur: commit bf2adcd (rilis build-20261122-034128, xxKSU + NoMount +
-#     fgetpriority tanpa SUSFS) atau titik AO.
+# CABANG SUSFS-NAJIP (2026-11-22) - SUSFS v2.4.0 ala Najip di atas
+# rosemary-4 (bf2adcd). main TIDAK disentuh cabang ini.
+# (a) Dua pin baru, FGETPRIORITY_PIN dicabut (total delapan): SUSFS_PIN ec069a4e3
+#     (JackA1ltman/NonGKI_Kernel_Build_2nd, susfs_patch_to_4.14.patch) dan
+#     NAJIP_PIN 018c4deb0 (Najip/KernelSU_SUSFS_Samsung_SM-A325X). KSU_PIN
+#     8c1579be4 (ORPHAN, rebase 31/31) -> 540360f50: diff kernel/ cuma jalur
+#     OABI ARM32. Kedelapan pin = HEAD upstream tanpa ORPHAN. Dari
+#     Najip hanya patches/kernelsu/0002-susfs-lifecycle-calls.patch yang
+#     dipakai, diterapkan apa adanya ke KernelSU dan dikunci sha256.
+#     Yang TIDAK diambil dari Najip: 0001-native-wrappers (hook manual),
+#     0001-hookless-skip-parent-hooks, 0001-jack-core-local-additions
+#     (susfs_get_data_path/getname_safe tak dipakai patch Jack = yatim;
+#     makro SUSFS_LOG*_RL sudah dipasang fixer), CFLAGS -include,
+#     ksun_compat.c, susfs_priority.c, dan forward reboot ke
+#     ksu_handle_sys_reboot (memicu double-call dengan hook tabel syscall).
+# (b) Glue parent-kernel + fixer bug SUSFS 4.14 sama dengan yang sudah
+#     hijau di main (d114374..3306ddc): fixer task_mmu/stat/statfs/fd/
+#     super/namespace/avc/susfs.c, reboot.c root-only (non-root tetap
+#     -EPERM), kallsyms menyembunyikan xxksu_*. Tambahan cabang ini:
+#     is_ksu_domain dirujuk kuat (bukan __weak, gagal link > diam-diam
+#     false), patch lifecycle diverifikasi letaknya karena butuh fuzz 2.
+# (c) Opsi SUSFS = daftar JackA1ltman (.github/workflows/patch-susfs/
+#     action.yml): 11 opsi =y, termasuk ENABLE_LOG dan PRIORITY_UID_FILTER
+#     (Jack menulis baris PRIORITY tanpa '=y'; di sini ditulis benar).
+#     fgetpriority dicabut (permintaan pemilik: ikut Jack); penyaringan
+#     getpriority/ioprio kini oleh SUSFS PRIORITY_UID_FILTER.
+# (d) Bug tersembunyi main yang tidak terulang di sini: build dari cabang
+#     uji-susfs-xxksu terbit sebagai rilis biasa dan sempat jadi "Latest".
+#     Di cabang ini setiap rilis di luar refs/heads/main = --prerelease
+#     --latest=false.
+#     Fixer SUSFS_LOGI_RL/LOGE_RL di main tidak pernah cocok (upstream
+#     menulis '#define SUSFS_LOGI(fmt, ...) ' dengan spasi di ujung); main
+#     lolos hanya karena ENABLE_LOG=y. Build pertama cabang ini (waktu itu
+#     ENABLE_LOG mati) membuktikannya:
+#     build ENABLE_LOG=n gagal di fs/susfs.c:112. Kini regex + assert wajib.
+# (e) Status: belum diflash. Mundur: rilis build-20261122-034128 (bf2adcd).
+#
+# REVISI ROSEMARY-6 (2026-11-22) - permintaan pemilik: susfs-najip menjadi
+# main, cabang lain dihapus (hanya main). Merge commit dengan tree persis
+# susfs-najip 99e968e di atas main 3306ddc (rosemary-5); riwayat kedua sisi
+# tetap ada, tanpa force push. Isi kernel setara rosemary-5 (ringkasan-log
+# prerelease build-20261122-095109 identik dengan build-20261122-082156);
+# bedanya lifecycle = patch 0002 Najip ber-sha256 + verifikasi letak, fixer
+# SUSFS_LOG*_RL yang benar-benar cocok, is_ksu_domain rujukan kuat, dan rilis
+# cabang non-main = prerelease. Mundur: rilis build-20261122-082156
+# (rosemary-5, 3306ddc) atau build-20261122-034128 (rosemary-4, bf2adcd).
 # ============================================================
 
 name: Build Kernel Rosemary (xxKSU + SUSFS + NoMount)
@@ -1660,7 +1679,7 @@ jobs:
   #
   # Gerbang ini menjawab satu pertanyaan: adakah yang benar-benar berubah bagi
   # kernel hasil build? Yang dihitung cuma dua - berkas selain pins.env
-  # (workflow ini sendiri termasuk) dan NILAI ketujuh SHA. Komentar pins.env
+  # (workflow ini sendiri termasuk) dan NILAI kedelapan SHA. Komentar pins.env
   # bukan salah satunya.
   #
   # SETIAP jalur ragu berakhir lanjut=1, tidak pernah 0: token gagal, compare
@@ -1678,7 +1697,7 @@ jobs:
   # Hal yang sama terjadi kalau build X GAGAL lalu komentar menyusul. Pertanyaan
   # yang benar bukan "apa beda dari push sebelumnya" tapi "apa beda dari kernel
   # yang terakhir benar-benar terbit". Yang dihitung pun cuma dua: berkas
-  # workflow build ini dan NILAI ketujuh SHA. Workflow robot (pin-watch,
+  # workflow build ini dan NILAI kedelapan SHA. Workflow robot (pin-watch,
   # naikkan-pin) tidak ikut mengompilasi, jadi tidak memicu rilis kembar.
   gerbang:
     # Revisi ke-55: 22.04 -> 24.04. ubuntu-22.04 mulai dipensiunkan
@@ -1776,7 +1795,7 @@ jobs:
                     alasan="pins.env sesudah push cuma terbaca ${N_BARU:-0} baris pin - dibangun, biar step 'Muat pins.env' yang memvonis"
                   elif [ "$PIN_LAMA" = "$PIN_BARU" ]; then
                     lanjut=0
-                    alasan="ketujuh SHA dan workflow build sama persis dengan rilis ${TAG_LATEST} (${SEBELUM:0:9}) - TIDAK dibangun"
+                    alasan="kedelapan SHA dan workflow build sama persis dengan rilis ${TAG_LATEST} (${SEBELUM:0:9}) - TIDAK dibangun"
                   else
                     alasan="nilai pin beda dari rilis ${TAG_LATEST} - dibangun"
                   fi
@@ -1855,12 +1874,13 @@ jobs:
           # kepala loop ini, sekali lagi (secara tersirat, sebagai pola
           # [A-Z0-9_]+) di baris yang mengekspor ke $GITHUB_ENV. Sekarang satu
           # daftar dipakai keduanya.
-          # Revisi rosemary-5: FGETPRIORITY_PIN diganti SUSFS_PIN (jumlah tetap 7).
+          # Cabang susfs-najip: delapan nama (SUSFS_PIN + NAJIP_PIN ditambahkan,
+          # FGETPRIORITY_PIN dicabut - opsi SUSFS mengikuti JackA1ltman).
           # Revisi ke-120: tujuh nama (FGETPRIORITY_PIN ditambahkan; fgetpriority
           # built-in, hook getpriority/ioprio).
           # Revisi ke-118: enam nama (SCRIPTS_PIN dan SUSFS_PIN dicabut bersama
           # BakaSU + SUSFS).
-          WAJIB="KERNEL_PIN KSU_PIN SUSFS_PIN
+          WAJIB="KERNEL_PIN KSU_PIN SUSFS_PIN NAJIP_PIN
                  NOMOUNT_PIN NOMOUNT_LOADER_PIN CLANG_PIN AK3_PIN"
           for n in $WAJIB; do
             N_BARIS="$(grep -cE "^${n}=[0-9a-f]{40}$" /tmp/pins.env || true)"
@@ -1884,13 +1904,13 @@ jobs:
             grep -E "^${n}=[0-9a-f]{40}$" /tmp/pins.env >> /tmp/pins.export
           done
 
-          # Baris yang lolos bentuk tapi bukan salah satu dari enam bukan
+          # Baris yang lolos bentuk tapi bukan salah satu dari delapan bukan
           # error - pins.env boleh lebih dulu memuat pin untuk step yang belum
           # ditulis - tapi WAJIB kelihatan. Diabaikan diam-diam persis cara
           # sebuah salinan kedua jadi basi tanpa ketahuan (revisi ke-26..28).
           if ASING="$(grep -E '^[A-Z0-9_]+=[0-9a-f]{40}$' /tmp/pins.env \
                       | grep -vxF -f /tmp/pins.export)"; then
-            echo "CATATAN: baris berbentuk sah tapi DI LUAR tujuh nama - tidak diekspor:"
+            echo "CATATAN: baris berbentuk sah tapi DI LUAR delapan nama - tidak diekspor:"
             printf '%s\n' "$ASING" | sed 's/^/  /'
           fi
 
@@ -2075,133 +2095,101 @@ jobs:
             fi
           done
           if grep -rIqi 'susfs' KernelSU/kernel; then
-            echo "ERROR: pohon xxKSU upstream kini menyebut susfs - audit ulang sebelum menerapkan patch lifecycle:"
+            echo "ERROR: pohon xxKSU upstream kini menyebut susfs - audit ulang sebelum menerapkan patch lifecycle Najip:"
             grep -rIli 'susfs' KernelSU/kernel | head
             exit 1
           fi
 
-          # Revisi rosemary-5: 6 hook lifecycle ringan di KernelSU/kernel agar
-          # xxKSU memberi tahu glue parent-kernel SUSFS (reset/deny task saat
-          # setuid/escape, set TIF_PROC_UMOUNTED + extra_works sesudah umount,
-          # start sdcard monitor + cache SELinux SID di post-fs-data, resolve
-          # ulang UID filter saat packages.list berubah di throne_tracker).
-          # Semua dibungkus #ifdef CONFIG_KSU_SUSFS; tidak menyentuh hook
-          # syscall_table atau LSM milik xxKSU.
-          cat > /tmp/xxksu_susfs_lifecycle.patch <<'XXKSU_LIFECYCLE_PATCH'
-          diff --git a/kernel/ksu.c b/kernel/ksu.c
-          --- a/kernel/ksu.c
-          +++ b/kernel/ksu.c
-          @@ -24,4 +24,7 @@
-           #include "kernel_includes.h"
-          +#ifdef CONFIG_KSU_SUSFS
-          +#include <linux/xxksu_parent_bridge.h>
-          +#endif
-           
-           // selinux includes
-           #include "avc_ss.h"
-          diff --git a/kernel/hook/setuid_hook.c b/kernel/hook/setuid_hook.c
-          --- a/kernel/hook/setuid_hook.c
-          +++ b/kernel/hook/setuid_hook.c
-          @@ -10,4 +10,8 @@
-           	if (unlikely(!!old_uid))
-           		return;
-           
-          +#ifdef CONFIG_KSU_SUSFS
-          +	xxksu_parent_reset_task();
-          +#endif
-          +
-           	if (IS_ENABLED(CONFIG_KSU_DEBUG))
-          @@ -25,3 +25,6 @@
-          +#ifdef CONFIG_KSU_SUSFS
-          +	xxksu_parent_deny_task();
-          +#endif
-           	// Handle kernel umount
-           	ksu_handle_umount(new, old);
-           	return;
-          diff --git a/kernel/feature/kernel_umount.c b/kernel/feature/kernel_umount.c
-          --- a/kernel/feature/kernel_umount.c
-          +++ b/kernel/feature/kernel_umount.c
-          @@ -75,11 +75,15 @@
-           	uid_t new_uid = ksu_get_uid_t(new->uid);
-           	uid_t old_uid = ksu_get_uid_t(old->uid);
-           
-          +#ifdef CONFIG_KSU_SUSFS
-          +	bool do_kernel_umount = ksu_kernel_umount_enabled && ksu_module_mounted;
-          +#else
-           	if (!ksu_kernel_umount_enabled)
-           		return 0;
-           
-           	// if there isn't any module mounted, just ignore it!
-           	if (!ksu_module_mounted)
-           		return 0;
-          +#endif
-           
-           	// There are 6 scenarios:
-          @@ -104,4 +108,10 @@
-           		pr_info("handle umount ignore non zygote child: %d\n", current->pid);
-           		return 0;
-           	}
-          +#ifdef CONFIG_KSU_SUSFS
-          +	if (!do_kernel_umount) {
-          +		xxksu_parent_finish_umount();
-          +		return 0;
-          +	}
-          +#endif
-           	// umount the target mnt
-          @@ -122,4 +132,7 @@
-           	revert_creds(saved);
-          +#ifdef CONFIG_KSU_SUSFS
-          +	xxksu_parent_finish_umount();
-          +#endif
-           
-           	return 0;
-           }
-          diff --git a/kernel/policy/app_profile.c b/kernel/policy/app_profile.c
-          --- a/kernel/policy/app_profile.c
-          +++ b/kernel/policy/app_profile.c
-          @@ -154,4 +154,7 @@
-           	commit_creds(cred);
-          +#ifdef CONFIG_KSU_SUSFS
-          +	xxksu_parent_reset_task();
-          +#endif
-           
-           	if (ksu_is_seccomp_enabled())
-           		disable_seccomp();
-          diff --git a/kernel/runtime/boot_event.c b/kernel/runtime/boot_event.c
-          --- a/kernel/runtime/boot_event.c
-          +++ b/kernel/runtime/boot_event.c
-          @@ -14,4 +14,7 @@
-           	ksu_load_allow_list();
-          +#ifdef CONFIG_KSU_SUSFS
-          +	xxksu_parent_post_fs_data();
-          +#endif
-           
-           	// Sanity check for safe mode only needs early-boot input samples.
-           	ksu_stop_input_hook_runtime();
-          diff --git a/kernel/manager/throne_tracker.c b/kernel/manager/throne_tracker.c
-          --- a/kernel/manager/throne_tracker.c
-          +++ b/kernel/manager/throne_tracker.c
-          @@ -403,6 +403,9 @@ start_tt:
-           	// this in exchange of override creds, we escape this whole thread.
-           	escape_to_root_forced();
-           	throne_tracker_fn(prune_only);
-          +#ifdef CONFIG_KSU_SUSFS
-          +	xxksu_parent_packages_changed();
-          +#endif
-           
-           	pr_info("throne_tracker: pid: %d exit!\n", current->pid);
-           	return 0;
-          XXKSU_LIFECYCLE_PATCH
-          git -C KernelSU apply --check /tmp/xxksu_susfs_lifecycle.patch
-          git -C KernelSU apply /tmp/xxksu_susfs_lifecycle.patch
-          rm -f /tmp/xxksu_susfs_lifecycle.patch
+          # Cabang susfs-najip: hook lifecycle SUSFS di KernelSU/kernel diambil
+          # APA ADANYA dari Najip (patches/kernelsu/0002-susfs-lifecycle-calls.patch
+          # @ NAJIP_PIN), bukan ditulis ulang: reset/deny task saat setuid dan
+          # escape_to_root, TIF_PROC_UMOUNTED + susfs_extra_works sesudah umount,
+          # sdcard monitor + SID SELinux di post-fs-data, UID filter diurai ulang
+          # saat packages.list berubah. Semua dibungkus #ifdef CONFIG_KSU_SUSFS
+          # dan tidak menyentuh hook tabel syscall/LSM xxKSU. 0001-native-wrappers
+          # Najip TIDAK dipakai (untuk hook manual; build ini hookless).
+          NAJIP_0002=/tmp/najip_0002.patch
+          curl -fLSs --retry 3 \
+            "https://raw.githubusercontent.com/Najip/KernelSU_SUSFS_Samsung_SM-A325X/${NAJIP_PIN}/patches/kernelsu/0002-susfs-lifecycle-calls.patch" \
+            -o "$NAJIP_0002"
+          # Isi dikunci sha256: NAJIP_PIN boleh naik tanpa 0002 berubah, tapi
+          # kalau 0002 berubah build berhenti di sini dan wajib diaudit ulang.
+          echo "c4f70fb4ef510bbf06e9fc215e64aababe751573f0b8c851d93881cd322990bf  $NAJIP_0002" | sha256sum -c -
+          # Konteks hunk Najip dibuat untuk pohon xxKSU lain: git apply menolak
+          # throne_tracker.c dan patch(1) butuh fuzz 2 di setuid_hook.c. Fuzz
+          # diizinkan, tapi letak setiap panggilan diverifikasi persis di bawah.
+          patch -d KernelSU -p1 --no-backup-if-mismatch -F2 < "$NAJIP_0002"
+          rm -f "$NAJIP_0002"
+          if find KernelSU -name '*.rej' | grep -q .; then
+            echo "ERROR: patch 0002 Najip meninggalkan .rej:"
+            find KernelSU -name '*.rej'
+            exit 1
+          fi
+
+          python3 - <<'NAJIP_0002_CEK_PY'
+          import sys
+          K = "KernelSU/kernel/"
+          def rd(p):
+              return open(K + p, encoding='utf-8').read()
+          def ifd(x):
+              return "#ifdef CONFIG_KSU_SUSFS\n" + x + "#endif\n"
+          # Letak persis tiap hook (anchor + blok) - fuzz tidak boleh menggeser.
+          CEK = [
+              ("ksu.c", '#include "kernel_includes.h"\n' + ifd("#include <linux/xxksu_parent_bridge.h>\n")),
+              ("hook/setuid_hook.c", "\tif (unlikely(!!old_uid))\n\t\treturn;\n\n" + ifd("\txxksu_parent_reset_task();\n")),
+              ("hook/setuid_hook.c", "\t\tgoto kill_seccomp;\n\n" + ifd("\txxksu_parent_deny_task();\n") + "\t// Handle kernel umount\n\tksu_handle_umount(new, old);\n"),
+              ("feature/kernel_umount.c", "\trevert_creds(saved);\n" + ifd("\txxksu_parent_finish_umount();\n")),
+              ("policy/app_profile.c", "\tcommit_creds(cred);\n" + ifd("\txxksu_parent_reset_task();\n")),
+              ("runtime/boot_event.c", "\tksu_load_allow_list();\n" + ifd("\txxksu_parent_post_fs_data();\n")),
+              ("manager/throne_tracker.c", "\tthrone_tracker_fn(prune_only);\n" + ifd("\txxksu_parent_packages_changed();\n")),
+          ]
+          for p, blk in CEK:
+              n = rd(p).count(blk)
+              if n != 1:
+                  sys.exit(f"ERROR: 0002 Najip: blok di {p} ketemu {n}x (harus 1):\n{blk}")
+          total = sum(rd(p).count("xxksu_parent_") for p in sorted({p for p, _ in CEK}))
+          if total != 7:
+              sys.exit(f"ERROR: 0002 Najip: {total} rujukan xxksu_parent_ (harus 7)")
+
+          # Bug tersembunyi 0002 (sama dengan perbaikan main 3118e54):
+          # xxksu_parent_finish_umount() hanya terpanggil kalau xxKSU benar-benar
+          # meng-umount, yaitu kernel_umount hidup DAN ada modul ter-mount.
+          # Dengan NoMount saja (tanpa notify-module-mounted) atau kernel_umount
+          # mati, TIF_PROC_UMOUNTED tidak pernah terpasang sehingga SUS_MOUNT,
+          # SUS_MAP, OPEN_REDIRECT, SUS_KSTAT dan SUS_PATH_LOOP diam. Di sini
+          # syarat uid/zygote tetap dicek, try_umount tetap ditahan, tapi
+          # penandaan SUSFS tetap jalan.
+          p = K + "feature/kernel_umount.c"
+          s = open(p, encoding='utf-8').read()
+          old1 = ("\tif (!ksu_kernel_umount_enabled)\n\t\treturn 0;\n\n"
+                  "\t// if there isn't any module mounted, just ignore it!\n"
+                  "\tif (!ksu_module_mounted)\n\t\treturn 0;\n")
+          new1 = ("#ifdef CONFIG_KSU_SUSFS\n"
+                  "\tbool do_kernel_umount = ksu_kernel_umount_enabled && ksu_module_mounted;\n"
+                  "#else\n" + old1 + "#endif\n")
+          old2 = ('\t\tpr_info("handle umount ignore non zygote child: %d\\n", current->pid);\n'
+                  "\t\treturn 0;\n\t}\n")
+          new2 = old2 + ifd("\tif (!do_kernel_umount) {\n"
+                            "\t\txxksu_parent_finish_umount();\n"
+                            "\t\treturn 0;\n\t}\n")
+          for o in (old1, old2):
+              if s.count(o) != 1:
+                  sys.exit(f"ERROR: kernel_umount.c anchor ketemu {s.count(o)}x (harus 1):\n{o}")
+          s = s.replace(old1, new1, 1).replace(old2, new2, 1)
+          if s.count("xxksu_parent_finish_umount();") != 2 or s.count("do_kernel_umount") != 2:
+              sys.exit("ERROR: perbaikan TIF_PROC_UMOUNTED kernel_umount.c tidak lengkap")
+          open(p, 'w', encoding='utf-8').write(s)
+          print("OK: 0002 Najip terverifikasi (7 rujukan di 6 berkas) + perbaikan TIF_PROC_UMOUNTED")
+          NAJIP_0002_CEK_PY
+
           N_LIFE=$(git -C KernelSU diff --name-only | wc -l)
           test "$N_LIFE" = "6" || {
-            echo "ERROR: patch lifecycle xxKSU diharapkan menyentuh 6 berkas, aktual $N_LIFE"
+            echo "ERROR: lifecycle xxKSU diharapkan menyentuh 6 berkas, aktual $N_LIFE"
             git -C KernelSU diff --stat
             exit 1
           }
-          echo "OK: 6 hook lifecycle SUSFS diterapkan bersih di KernelSU/kernel"
+          echo "NAJIP_SHA=${NAJIP_PIN:0:9}" >> "$GITHUB_ENV"
+          echo "OK: hook lifecycle SUSFS Najip terpasang di KernelSU/kernel"
 
           # KSU_VERSION xxKSU konstanta di Makefile (bukan hitungan commit),
           # jadi tidak ada lagi syarat clone penuh maupun urusan "-dirty".
@@ -2220,14 +2208,15 @@ jobs:
           echo "xxKSU commit: $KSU_HEAD (KSU_VERSION $KSU_VER)"
           echo "Integrasi xxKSU: SUKSES"
 
-      - name: Integrasikan SUSFS v2.4.0 (Jack 4.14 patch + glue xxKSU, di-PIN)
+      - name: Integrasikan SUSFS v2.4.0 ala Najip (Jack 4.14 patch + glue xxKSU, di-PIN)
         working-directory: kernel
         run: |
           set -euo pipefail
 
-          # Revisi rosemary-5: patch sisi kernel SUSFS 4.14 (JackA1ltman) +
-          # glue parent-kernel untuk xxKSU (syscall_table + LSM). Tanpa BakaSU
-          # dan tanpa Build-Kernel_scripts.
+          # Cabang susfs-najip: patch sisi kernel SUSFS 4.14 (JackA1ltman) +
+          # fixer bug 4.14 + glue parent-kernel untuk xxKSU (tabel syscall +
+          # LSM), disusun seperti Najip/KernelSU_SUSFS_Samsung_SM-A325X tetapi
+          # tanpa hook manual. Tanpa BakaSU dan tanpa Build-Kernel_scripts.
           PATCH_RAW=/tmp/susfs_414_raw.patch
           PATCH_CLEAN=/tmp/susfs_414_clean.patch
           curl -fLSs --retry 3 \
@@ -2502,12 +2491,20 @@ jobs:
                   s = s.replace(CALL_BAD, CALL_OK, 1)
                   changed = True
               # Pastikan SUSFS_LOGI_RL/SUSFS_LOGE_RL ada juga saat ENABLE_LOG mati.
-              rl_old = "#else\n#define SUSFS_LOGI(fmt, ...)\n#define SUSFS_LOGE(fmt, ...)\n#endif\n"
-              rl_new = ("#else\n#define SUSFS_LOGI(fmt, ...)\n#define SUSFS_LOGE(fmt, ...)\n"
-                        "#define SUSFS_LOGI_RL(fmt, ...)\n#define SUSFS_LOGE_RL(fmt, ...)\n#endif\n")
-              if rl_old in s:
-                  s = s.replace(rl_old, rl_new, 1)
+              # Upstream menulis '#define SUSFS_LOGI(fmt, ...) ' dengan spasi di
+              # ujung, jadi anchor string persis tidak pernah cocok dan build
+              # ENABLE_LOG=n gagal di SUSFS_LOGI_RL (main tak kena karena
+              # ENABLE_LOG=y). Dicocokkan dengan regex, lalu diwajibkan di bawah.
+              rl_pat = re.compile(r'^(#else\n#define SUSFS_LOGI\(fmt, \.\.\.\)[ \t]*\n'
+                                  r'#define SUSFS_LOGE\(fmt, \.\.\.\)[ \t]*\n)(#endif\n)', re.M)
+              n_rl = len(rl_pat.findall(s))
+              if n_rl == 1:
+                  s = rl_pat.sub(lambda m: m.group(1) + "#define SUSFS_LOGI_RL(fmt, ...)\n"
+                                 "#define SUSFS_LOGE_RL(fmt, ...)\n" + m.group(2), s, count=1)
+                  print("susfs.c: SUSFS_LOGI_RL/SUSFS_LOGE_RL kosong ditambahkan untuk ENABLE_LOG mati")
                   changed = True
+              elif s.count("#define SUSFS_LOGI_RL(") != 2:
+                  sys.exit("susfs-fix: blok #else SUSFS_LOGI/LOGE ketemu %d kali (harus 1)" % n_rl)
               # 4.14 kfree_rcu(NULL, rcu) = NULL deref panic (NULL check baru ada di 5.x).
               # Upstream v2.4.0 sudah menjaga priority_uid_filter tapi lupa di sus_path_uid_filter.
               kfr_bad = "\tsynchronize_rcu();\n\tkfree_rcu(old_bitmap, rcu);\n"
@@ -2610,6 +2607,9 @@ jobs:
           su = rd('fs/susfs.c')
           if '#include <linux/security.h>' not in su: err.append("fs/susfs.c tanpa <linux/security.h>")
           if CALL_BAD in su: err.append("fs/susfs.c call 2-argumen")
+          for _m in ('SUSFS_LOGI_RL', 'SUSFS_LOGE_RL'):
+              if su.count('#define %s(' % _m) != 2:
+                  err.append(f"fs/susfs.c {_m} tidak terdefinisi di kedua cabang ENABLE_LOG")
           if "\tsynchronize_rcu();\n\tkfree_rcu(old_bitmap, rcu);\n" in su:
               err.append("fs/susfs.c masih ada kfree_rcu(old_bitmap, rcu) tanpa if (old_bitmap)")
           fd = rd('fs/proc/fd.c')
@@ -2730,14 +2730,16 @@ jobs:
 
           #ifdef CONFIG_KSU_SUSFS
 
-          extern bool is_ksu_domain(void) __weak;
+          /* Strong reference: KSU_SUSFS depends on KSU = y, so a missing symbol
+           * must fail the link instead of silently reporting "not ksu". */
+          extern bool is_ksu_domain(void);
 
           u32 susfs_ksu_sid __read_mostly;
           u32 susfs_priv_app_sid __read_mostly;
 
           bool susfs_is_current_ksu_domain(void)
           {
-          	return is_ksu_domain ? is_ksu_domain() : false;
+          	return is_ksu_domain();
           }
 
           void susfs_cache_selinux_sids(void)
@@ -4029,10 +4031,11 @@ jobs:
         run: |
           DEF=arch/arm64/configs/rosemary_defconfig
 
-          # ----- AUDIT STRUKTUR (revisi ke-118 + rosemary-5) -----
+          # ----- AUDIT STRUKTUR (revisi ke-118 + cabang susfs-najip) -----
           # xxKSU (backslashxx/KernelSU) memakai hook tabel syscall + LSM.
           # SUSFS v2.4.0 (fs/Kconfig.susfs) hidup di parent kernel tanpa
-          # mengubah mode hook xxKSU dan tanpa BakaSU.
+          # mengubah mode hook xxKSU dan tanpa BakaSU. Sebelas opsi =y =
+          # daftar JackA1ltman (.github/workflows/patch-susfs/action.yml).
           if grep -nE '^(# )?CONFIG_KSU' "$DEF"; then
             echo "ERROR: $DEF sudah berisi baris CONFIG_KSU sebelum step ini."
             exit 1
@@ -4056,7 +4059,7 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
             echo "CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y"
           } >> "$DEF"
-          echo "[defconfig] xxKSU + SUSFS v2.4.0 (11 opsi) ditambahkan"
+          echo "[defconfig] xxKSU + SUSFS v2.4.0 (11 opsi =y, daftar JackA1ltman)"
 
           {
             echo ""
@@ -4353,7 +4356,7 @@ jobs:
           grep -q '^CONFIG_NOMOUNT=y$' out/.config || { echo "ERROR: CONFIG_NOMOUNT tidak resolve ke y"; exit 1; }
 
           if grep -qE '^CONFIG_FGETPRIORITY=' out/.config; then
-            echo "ERROR: CONFIG_FGETPRIORITY masih aktif padahal sudah dicabut di rosemary-5"
+            echo "ERROR: CONFIG_FGETPRIORITY masih aktif padahal sudah dicabut (ikut JackA1ltman)"
             exit 1
           fi
 
@@ -4497,8 +4500,8 @@ jobs:
           done
           echo "OK: banner 4.14.186-perf + handler tabel syscall xxKSU ada di hasil build."
 
-          # Revisi rosemary-5: objek + simbol SUSFS & glue di vmlinux membuktikan
-          # susfs.c, susfs_ksu_glue.c, dan xxksu_susfs_lifecycle.c benar-benar
+          # Cabang susfs-najip: objek + simbol SUSFS & glue di vmlinux membuktikan
+          # susfs.c, susfs_ksu_glue.c dan xxksu_susfs_lifecycle.c benar-benar
           # terkompilasi dan tertaut bersama xxKSU.
           for obj in out/fs/susfs.o out/fs/susfs_ksu_glue.o out/fs/xxksu_susfs_lifecycle.o; do
             test -f "$obj" || {
@@ -4507,7 +4510,7 @@ jobs:
             }
           done
           for sym in susfs_init susfs_ksu_handle_cmd susfs_is_current_ksu_domain \
-                     susfs_set_priority_uid_filter xxksu_parent_finish_umount \
+                     susfs_set_priority_uid_filter xxksu_parent_reset_task xxksu_parent_finish_umount \
                      xxksu_parent_post_fs_data xxksu_parent_packages_changed; do
             grep -qE "^[0-9a-f]+ [Tt] ${sym}\$" out/System.map || {
               echo "ERROR: simbol $sym tidak ada di System.map - glue SUSFS tidak tertaut ke vmlinux"
@@ -4720,26 +4723,27 @@ jobs:
             echo "| Add-on | Status |"
             echo "|---|---|"
             echo "| NoMount        | aktif (selalu ikut) |"
-            echo "| SUSFS          | aktif (${SUSFS_VER:-v2.4.0} via glue parent-kernel di atas xxKSU, termasuk priority UID filter) |"
             echo "| BBR + fq       | aktif (congestion control default \`bbr\`, qdisc default \`fq\`) |"
-            echo "| fgetpriority   | dicabut (revisi rosemary-5: diganti SUSFS priority UID filter) |"
             echo "| Re:Kernel      | dicabut permanen (revisi ke-11) |"
             echo "| Baseband-guard | dicabut permanen (revisi ke-11) |"
+            echo "| SUSFS          | aktif (${SUSFS_VER:-v2.4.0} ala Najip, glue parent-kernel di atas xxKSU, 11 opsi JackA1ltman termasuk priority UID filter) |"
+            echo "| fgetpriority   | dicabut (diganti SUSFS priority UID filter, ikut JackA1ltman) |"
             echo ""
             echo "| Komponen | Commit |"
             echo "|---|---|"
             echo "| Kernel (rosemary-13) | \`${KERNEL_SHA:-?}\` |"
             echo "| xxKSU (di-PIN, KSU_VERSION ${KSU_VER:-?}) | \`${KSU_SHA:-?}\` |"
             echo "| SUSFS (di-PIN, ${SUSFS_VER:-?}) | \`${SUSFS_SHA:-?}\` |"
+            echo "| Najip lifecycle 0002 (di-PIN) | \`${NAJIP_SHA:-?}\` |"
             echo "| NoMount (di-PIN) | \`${NOMOUNT_SHA:-?}\` |"
             echo ""
             # Alasan yang sama dengan blok kembarannya di step "Terbitkan
             # Release", dengan satu tambahan: step ini `if: always()`, jadi
-            # untuk build yang GAGAL inilah satu-satunya tempat ketujuh pin
+            # untuk build yang GAGAL inilah satu-satunya tempat kedelapan pin
             # tercatat - rilisnya tidak pernah terbit. Sumbernya tetap
             # /tmp/pins.export, bukan daftar nama baru.
             if [ -s /tmp/pins.export ]; then
-              echo "<details><summary>Ketujuh pin yang mengunci build ini</summary>"
+              echo "<details><summary>Kedelapan pin yang mengunci build ini</summary>"
               echo ""
               echo '```'
               cat /tmp/pins.export
@@ -4820,12 +4824,24 @@ jobs:
           test -f "$ZIP" || { echo "ERROR: zip tidak ada: $ZIP"; exit 1; }
 
           TAG="build-$(date -u +%Y%m%d-%H%M%S)"
+          # Cabang selain main = build uji: prerelease dan tidak pernah jadi
+          # "Latest". Gerbang dan tandai-boot membaca releases/latest; rilis
+          # biasa dari cabang uji menggeser basis main diam-diam.
+          REL_UJI=()
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            REL_UJI=(--prerelease --latest=false)
+          fi
           {
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              printf '> **BUILD UJI cabang `%s`** (prerelease). Belum diflash, belum\n' "$GITHUB_REF_NAME"
+              printf '> terbukti boot. Rilis main tetap jadi "Latest".\n\n'
+            fi
             printf 'Build otomatis dari commit `%s`.\n\n' "${GITHUB_SHA:0:9}"
             printf -- '| bagian | commit |\n|---|---|\n'
             printf -- '| kernel | `%s` |\n' "$KERNEL_SHA"
             printf -- '| xxKSU (KSU_VERSION %s) | `%s` |\n' "$KSU_VER" "$KSU_SHA"
             printf -- '| SUSFS (%s) | `%s` |\n' "$SUSFS_VER" "$SUSFS_SHA"
+            printf -- '| Najip lifecycle 0002 | `%s` |\n' "$NAJIP_SHA"
             printf -- '| NoMount | `%s` |\n' "$NOMOUNT_SHA"
             # Revisi ke-46: KEDELAPAN pin, bukan tiga. Sejak revisi ke-45c
             # pertanyaan "dua rilis ini isinya sama atau tidak?" dijawab persis
@@ -4843,16 +4859,16 @@ jobs:
             # inilah yang disalin orang ke pins.env waktu mundur, dan penjaga
             # bentuk di step "Muat pins.env" menolak SHA pendek (revisi ke-37).
             if [ -s /tmp/pins.export ]; then
-              printf -- '\n<details><summary>Ketujuh pin yang mengunci build ini</summary>\n\n'
+              printf -- '\n<details><summary>Kedelapan pin yang mengunci build ini</summary>\n\n'
               printf -- '```\n'
               cat /tmp/pins.export
               printf -- '```\n\n'
               printf -- 'Dikompilasi oleh revisi workflow di commit `%s`.\n' "$GITHUB_SHA"
-              printf -- 'Dua rilis berisi kernel yang sama HANYA kalau ketujuh baris di\n'
+              printf -- 'Dua rilis berisi kernel yang sama HANYA kalau kedelapan baris di\n'
               printf -- 'atas DAN commit itu sama persis. Ukuran zip tidak menentukan apa pun.\n'
               printf -- '</details>\n'
             else
-              printf -- '\n> CATATAN: daftar ketujuh pin tidak terbaca (`/tmp/pins.export`\n'
+              printf -- '\n> CATATAN: daftar kedelapan pin tidak terbaca (`/tmp/pins.export`\n'
               printf -- '> kosong) - rilis ini tidak bisa dibandingkan isinya dengan rilis lain\n'
               printf -- '> tanpa membuka log run-nya.\n'
             fi
@@ -4861,17 +4877,20 @@ jobs:
             printf -- '- `%s` sudah berformat AnyKernel3: flash langsung lewat\n' "$ZIP"
             printf -- '  recovery/KernelSU, tidak perlu dibongkar dulu.\n'
             printf -- '- Kernel ini memakai **xxKSU** (backslashxx/KernelSU) + **SUSFS %s**\n' "$SUSFS_VER"
-            printf -- '  (via glue parent-kernel, tanpa BakaSU) + **NoMount**, uname\n'
+            printf -- '  (ala Najip: glue parent-kernel + lifecycle 0002, tanpa BakaSU) +\n'
+            printf -- '  **NoMount** (opsi SUSFS = JackA1ltman, tanpa fgetpriority), uname\n'
             printf -- '  `4.14.186-perf`. Manager: APK dari halaman rilis\n'
             printf -- '  backslashxx/KernelSU (versi %s); manager BakaSU tidak dikenali.\n' "$KSU_VER"
             printf -- '- `TIF_PROC_UMOUNTED` dipasang otomatis untuk aplikasi non-root\n'
             printf -- '  turunan zygote (tetap bekerja walau `kernel_umount` mati atau hanya\n'
             printf -- '  memakai NoMount tanpa metamodule overlayfs).\n'
+            printf -- '- Status: **belum diflash**. Tandai lewat workflow "Tandai terbukti\n'
+            printf -- '  boot" hanya sesudah benar-benar boot di HP.\n'
           } > /tmp/notes.md
 
           # --target: tanpa repo git lokal, gh akan menempelkan tag ke HEAD
           # branch default. Kunci ke commit yang benar-benar dibangun.
-          gh release create "$TAG" "$ZIP" \
+          gh release create "$TAG" "$ZIP" "${REL_UJI[@]}" \
             --title "$TAG" --notes-file /tmp/notes.md --target "$GITHUB_SHA"
           # Dipakai step "Banding log dengan titik terbukti" sesudah ini.
           echo "REL_TAG=$TAG" >> "$GITHUB_ENV"
@@ -5150,10 +5169,11 @@ jobs:
           done <<'DAFTAR'
           KERNEL_PIN;dlagia/android_kernel_xiaomi_rosemary;kernel
           KSU_PIN;backslashxx/KernelSU;ksu
+          SUSFS_PIN;JackA1ltman/NonGKI_Kernel_Build_2nd;susfs
+          NAJIP_PIN;Najip/KernelSU_SUSFS_Samsung_SM-A325X;najip
           NOMOUNT_PIN;maxsteeel/nomount;nomount
           NOMOUNT_LOADER_PIN;maxsteeel/nomount;nomount-loader
           AK3_PIN;vlxlxlv/AnyKernel3;ak3
-          SUSFS_PIN;JackA1ltman/NonGKI_Kernel_Build_2nd;susfs
           DAFTAR
           if [ "$gagal" = 1 ]; then
             printf '\nAda pin yang gagal diarsip - lihat peringatan kuning di atas.\n' >> "$GITHUB_STEP_SUMMARY"
