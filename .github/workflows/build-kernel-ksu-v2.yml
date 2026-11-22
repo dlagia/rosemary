@@ -1969,7 +1969,7 @@ jobs:
 
       - name: Clone source kernel (dlagia/android_kernel_xiaomi_rosemary @ rosemary-13)
         run: |
-          git clone --depth=1 -b rosemary-13 \
+          git clone --depth=1 -b rosemary-13-lts357 \
             https://github.com/dlagia/android_kernel_xiaomi_rosemary.git kernel
           echo "KERNEL_SHA=$(git -C kernel rev-parse --short=9 HEAD)" >> "$GITHUB_ENV"
           echo "Kernel source commit: $(git -C kernel rev-parse HEAD)"
