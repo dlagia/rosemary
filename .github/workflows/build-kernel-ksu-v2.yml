@@ -1560,6 +1560,24 @@
 #     build-20261105-113645; rilis build-20261121-170756 repo ini dibangun
 #     dari isi yang sama tapi belum pernah diflash.
 # ============================================================
+# REVISI ROSEMARY-4 (2026-11-22, audit Claude)
+# (a) Pin dinaikkan ke HEAD sesudah diaudit (rincian di pins.env):
+#     - KSU_PIN 36a5ef0d4 -> 8c1579be4. Upstream menulis ulang tumpukan
+#       lagi (diverged 71/71), jadi 36a5ef0d4 ORPHAN. Diff tree kernel/
+#       hanya 2 perbaikan kompilasi (kallsyms_common.h, kernel_compat.h).
+#     - NOMOUNT_PIN 6849f00a3 -> 2e696f6da (PR #130): cek WHITEOUT dan
+#       RENAME_TARGET dipindah ke sebelum nm_rebind_path. Urutan saja.
+#       NOMOUNT_LOADER_PIN tetap 6849f00a3 (master tidak berubah).
+#     Lima pin lain (KERNEL, CLANG, AK3, FGETPRIORITY, LOADER) = HEAD.
+# (b) Audit repo: action tetap dipin SHA rilis terbaru (checkout v7.0.1,
+#     cache v6.1.0, upload-artifact v7.0.2); actionlint bersih; 7 pin
+#     selaras di pins.env, $WAJIB, KOMPONEN pin-watch, case naikkan-pin
+#     dan daftar arsip. Properti repo, ruleset, secret scanning dan
+#     izin Actions sudah benar. Issue, PR, alert Dependabot dan alert
+#     secret scanning = 0.
+# (c) Mundur: rilis build-20261121-174611 repo ini (revisi rosemary-3,
+#     commit 7cb30e1; belum diflash) atau titik AO (KSU f27e1f0d3).
+# ============================================================
 
 name: Build Kernel Rosemary (xxKSU + NoMount)
 
