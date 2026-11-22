@@ -222,8 +222,8 @@ git push
 
 Tiap Minggu 09:41 WIB, workflow **Bersihkan** menghapus rilis `build-*`
 yang belum ditandai titik, bukan 3 rilis terbaru, dan lebih tua dari
-14 hari, beserta cache ccache lama. Titik dan arsip-sumber tidak pernah
-dihapus. Mau lihat dulu tanpa menghapus: jalankan tangan dengan **coba**
+14 hari, beserta cache ccache lama. Titik, rilis Latest, dan arsip-sumber
+tidak pernah dihapus. Mau lihat dulu tanpa menghapus: jalankan tangan dengan **coba**
 dicentang.
 
 ## Yang tetap keputusan Anda

@@ -35,7 +35,7 @@
 # dlagia/test, dan semua "titik" + nomor rilis di riwayat itu adalah rilis
 # dlagia/test. Di repo ini titik ditandai tag titik-* (workflow "Tandai
 # terbukti boot"), bukan lagi komentar. Revisi khusus repo ini: REVISI
-# ROSEMARY-3 di akhir riwayat (sebelum `name:`).
+# ROSEMARY-3 dan seterusnya di akhir riwayat (sebelum `name:`).
 #
 # ---- kepala lama (sampai revisi ke-117), dibiarkan sebagai sejarah ----
 # Integrasi KernelSU & SuSFS menggunakan dlagia/Build-Kernel_scripts
@@ -1658,6 +1658,23 @@
 #     NoMount LKM Najip; 0002 tetap sha256 c4f70fb4e.
 # (d) Delapan pin = HEAD upstream, tanpa ORPHAN. Mundur: rilis
 #     build-20261122-100046 (rosemary-6, kernel 4.14.332).
+#
+# REVISI ROSEMARY-8 (2026-11-22, audit Claude) - permintaan pemilik: audit
+# penuh, cek ORPHAN/dependency/bug tersembunyi, sinkronkan.
+# (a) KSU_PIN 540ad4ca3 (ORPHAN, upstream rebase 75/75, merge base
+#     ead7607e9) -> 9a08f36d3 (HEAD master). Diff tree kernel/ cuma 2
+#     berkas: Makefile (-Wno-alloca untuk ksu.o) dan feature/selinux_hide.h
+#     (do_useless_alloc kini ukuran acak 4..1020 B di stack lewat
+#     __builtin_alloca + 4096+n B di heap). Keenam berkas sasaran 0002
+#     Najip byte-identik, KSU_VERSION tetap 32733. Rincian di pins.env.
+# (b) NAJIP_PIN 716f9607b -> d1c4cca96 (HEAD main): tree BakaSU Najip
+#     dipindah ke cabang bakasu; 0002 blob sama, sha256 tetap c4f70fb4e.
+# (c) Bug tersembunyi bersihkan.yml: rilis Latest (basis gerbang build dan
+#     tombol tandai-boot) bisa terhapus kalau tiga rilis build-* lebih baru
+#     berupa prerelease uji dan umurnya > 14 hari. Kini Latest selalu
+#     disimpan.
+# (d) Delapan pin = HEAD upstream, tanpa ORPHAN. Mundur: rilis
+#     build-20261122-115328 (rosemary-7) atau titik-20261122-105230.
 # ============================================================
 
 name: Build Kernel Rosemary (xxKSU + SUSFS + NoMount)

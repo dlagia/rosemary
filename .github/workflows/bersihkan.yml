@@ -7,9 +7,10 @@
 # Rilis build-* DIHAPUS (beserta tag-nya) hanya kalau KETIGA syarat ini
 # benar sekaligus:
 #   1. tidak punya tag titik-* (belum ditandai terbukti boot);
-#   2. bukan salah satu dari SIMPAN rilis build-* terbaru (rilis terbaru
-#      juga basis gerbang build, jadi tidak boleh hilang);
+#   2. bukan rilis Latest (basis gerbang build dan tombol tandai-boot) dan
+#      bukan salah satu dari SIMPAN rilis build-* terbaru;
 #   3. umurnya lebih dari UMUR hari.
+# Kalau rilis Latest tak terbaca, tidak ada rilis yang dihapus.
 # Rilis selain build-* (mis. `arsip-sumber`) tidak pernah disentuh.
 #
 # Cache: hanya entri ccache-rosemary-* yang paling baru disimpan (build
@@ -57,6 +58,15 @@ jobs:
           # Semua rilis build-*, terbaru dulu (nama memuat waktu UTC, jadi urut nama = urut waktu).
           gh api --paginate "repos/${GH_REPO}/releases?per_page=100" --jq '.[].tag_name' |
             grep -xE 'build-[0-9]{8}-[0-9]{6}' | LC_ALL=C sort -r > /tmp/rilis || true
+          # Latest dipilih GitHub (rilis non-prerelease terbaru), bukan nama
+          # build-* terbaru: tiga prerelease uji bisa menggeser Latest keluar
+          # dari SIMPAN. gh api mencetak badan error ke STDOUT, jadi yang
+          # diperiksa bentuknya; tak terbaca = jangan hapus apa pun.
+          LATEST=$(gh api "repos/${GH_REPO}/releases/latest" --jq .tag_name 2>/dev/null || true)
+          if ! printf '%s' "$LATEST" | grep -qxE 'build-[0-9]{8}-[0-9]{6}'; then
+            echo "::warning::rilis Latest tak terbaca ('${LATEST:0:60}') - tidak ada rilis yang dihapus"
+            LATEST=""
+          fi
           BATAS=$(date -u -d "${UMUR} days ago" +%Y%m%d%H%M%S)
           n=0; hapus=0; simpan=0
           {
@@ -68,6 +78,10 @@ jobs:
             n=$((n + 1)); STAMP="${TAG#build-}"
             if printf '%s\n' "$TITIK" | grep -qxF "$STAMP"; then
               alasan="simpan: titik terbukti boot"
+            elif [ -z "$LATEST" ]; then
+              alasan="simpan: rilis Latest tak terbaca"
+            elif [ "$TAG" = "$LATEST" ]; then
+              alasan="simpan: rilis Latest"
             elif [ "$n" -le "$SIMPAN" ]; then
               alasan="simpan: ${SIMPAN} terbaru"
             elif [ "${STAMP//-/}" -gt "$BATAS" ]; then
