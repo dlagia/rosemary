@@ -14,4 +14,15 @@ dibangun otomatis oleh GitHub Actions. Revisi rosemary-6: susunan ini
 - Cara memakai, menaikkan versi, flash, dan pulih dari bootloop:
   **[PANDUAN.md](PANDUAN.md)**.
 
+## Kredit
+
+- **[Najip](https://github.com/Najip)** - metode SUSFS di atas xxKSU yang dipakai
+  kernel ini, dari repo
+  [Najip/KernelSU_SUSFS_Samsung_SM-A325X](https://github.com/Najip/KernelSU_SUSFS_Samsung_SM-A325X)
+  (GPL-2.0): susunan glue parent-kernel (dispatcher perintah SUSFS lewat
+  reboot magic, jembatan lifecycle `xxksu_parent_*`, `Kconfig.susfs`) dan
+  patch `patches/kernelsu/0002-susfs-lifecycle-calls.patch`, yang diterapkan
+  apa adanya ke xxKSU (dipin `NAJIP_PIN`). Terima kasih sudah membuktikan
+  xxKSU + SUSFS bisa jalan di kernel 4.14 non-GKI.
+
 Lisensi: GPL-2.0 (lihat `LICENSE`), sama dengan kernel Linux.
