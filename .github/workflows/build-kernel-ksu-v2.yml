@@ -2325,13 +2325,24 @@ jobs:
                   sys.exit("susfs-fix: anchor '%s' ketemu %d kali (harus %d) di %s" % (label, c, n, path))
 
           MNT_PAT = r'^[ \t]*stat->mnt_id = real_mount\(path->mnt\)->mnt_id;\n'
-          def fix_stat_mnt_id(s):
+          def fix_stat(s):
+              changed = False
               n = len(re.findall(MNT_PAT, s, re.M))
-              if n == 0:
-                  return None
-              if n != 2:
+              if n == 2:
+                  s = re.sub(MNT_PAT, '', s, flags=re.M)
+                  changed = True
+              elif n != 0:
                   sys.exit("susfs-fix: assignment stat->mnt_id aktif %d kali (harus 0/2)" % n)
-              return re.sub(MNT_PAT, '', s, flags=re.M)
+              # Tanpa skrip inline-hook BakaSU, patch Jack 4.14 lupa menyertakan
+              # <linux/susfs_def.h> di fs/stat.c (untuk susfs_is_current_app_uid
+              # & STATX_SUS_KSTAT*).
+              if "#include <linux/susfs_def.h>" not in s:
+                  anc = "#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\nextern bool susfs_is_inode_sus_kstat("
+                  need(s, anc, 'fs/stat.c', 'ifdef CONFIG_KSU_SUSFS_SUS_KSTAT + extern')
+                  s = s.replace(anc, "#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\n#include <linux/susfs_def.h>\nextern bool susfs_is_inode_sus_kstat(", 1)
+                  print("stat.c: #include <linux/susfs_def.h> ditambahkan")
+                  changed = True
+              return s if changed else None
 
           STATFS_ANCHOR = "static int susfs_statfs_by_dentry("
           STATFS_DECL = ("extern bool susfs_is_inode_sus_kstat(struct inode *inode, bool *out_is_fuse);\n"
@@ -2434,7 +2445,7 @@ jobs:
               print("namespace.c: mnt_id ksu dipindah ke ida_pre_get+ida_get_new_above di bawah mnt_id_lock")
               return s.replace(NS_OLD, NS_NEW, 1)
 
-          rw('fs/stat.c', fix_stat_mnt_id)
+          rw('fs/stat.c', fix_stat)
           rw('fs/statfs.c', fix_statfs)
           rw('fs/susfs.c', fix_susfs)
           rw('fs/proc/fd.c', fix_fd)
@@ -2449,6 +2460,7 @@ jobs:
           st = rd('fs/stat.c')
           if re.search(MNT_PAT, st, re.M): err.append("fs/stat.c masih punya stat->mnt_id aktif")
           if re.search(r'^\+', st, re.M): err.append("fs/stat.c masih punya baris '+'")
+          if '#include <linux/susfs_def.h>' not in st: err.append("fs/stat.c tanpa <linux/susfs_def.h>")
           sf = rd('fs/statfs.c')
           i_decl, i_use = sf.find('extern int susfs_sus_kstat_spoof_vfs_statfs'), sf.find(STATFS_ANCHOR)
           if i_use < 0 or not (0 <= i_decl < i_use): err.append("fs/statfs.c extern salah posisi")
