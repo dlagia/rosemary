@@ -30,12 +30,12 @@ on:
         type: choice
         options:
           - 'xxKSU'
+          - 'SUSFS'
           - 'NoMount driver'
           - 'NoMount loader'
           - 'source kernel'
           - 'AnyKernel3'
           - 'proton-clang'
-          - 'fgetpriority'
       sha:
         description: 'SHA tujuan - kosongkan untuk memakai HEAD upstream'
         required: false
@@ -93,11 +93,11 @@ jobs:
             'source kernel')         BARIS='KERNEL_PIN;dlagia/android_kernel_xiaomi_rosemary;rosemary-13;.' ;;
             # Revisi ke-118: BakaSU -> xxKSU; SUSFS dan Build-Kernel_scripts dicabut.
             'xxKSU')                 BARIS='KSU_PIN;backslashxx/KernelSU;master;^kernel/' ;;
+            'SUSFS')                 BARIS='SUSFS_PIN;JackA1ltman/NonGKI_Kernel_Build_2nd;mainline;^Patches/Patch/susfs_patch_to_4\.14\.patch$' ;;
             'NoMount driver')        BARIS='NOMOUNT_PIN;maxsteeel/nomount;dev;^(kernel/src/|userspace/src/)' ;;
             'NoMount loader')        BARIS='NOMOUNT_LOADER_PIN;maxsteeel/nomount;master;^kernel/setup\.sh' ;;
             'proton-clang')          BARIS='CLANG_PIN;kdrag0n/proton-clang;master;.' ;;
             'AnyKernel3')            BARIS='AK3_PIN;vlxlxlv/AnyKernel3;mt6781;^(tools/|META-INF/|ramdisk/)' ;;
-            'fgetpriority')          BARIS='FGETPRIORITY_PIN;aerath-stuff/fgetpriority;master;^kernel/' ;;
             *) echo "ERROR: komponen tak dikenal: $KOMPONEN"; exit 1 ;;
           esac
           IFS=';' read -r NAMA REPO REF SENSITIF <<< "$BARIS"

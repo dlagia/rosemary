@@ -1,6 +1,8 @@
 # ============================================================
 # Workflow GitHub Actions: Build Kernel Xiaomi Rosemary (kernel 4.14)
-# Sejak revisi ke-118 (2026-11-16): xxKSU (backslashxx/KernelSU), TANPA SUSFS.
+# Sejak revisi rosemary-5 (2026-11-22): xxKSU (backslashxx/KernelSU) +
+# SUSFS v2.4.0 (patch 4.14 JackA1ltman + glue parent-kernel, TANPA BakaSU) +
+# NoMount; fgetpriority dicabut (diganti CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y).
 # Seluruh riwayat BakaSU/ReSukiSU + SUSFS di bawah (revisi ke-1 s/d ke-117)
 # dibiarkan sebagai catatan sejarah; langkah-langkahnya sudah dicabut dari
 # badan workflow. Titik mundur BakaSU + SUSFS = titik AD (revisi ke-117,
@@ -8,14 +10,18 @@
 #
 # Fitur yang terpasang:
 # 1. xxKSU (backslashxx/KernelSU, branch master) lewat setup.sh resminya,
-#    hook lewat tabel syscall (CONFIG_KSU_TAMPER_SYSCALL_TABLE=y) + LSM;
-#    tidak ada satu pun patch hook manual di source kernel
-# 2. SUBLEVEL Makefile disamakan dengan kernel stok: uname -r 4.14.186-perf
-# 3. NoMount (branch dev milik maxsteeel/nomount) + compiler biner CLI nm
-# 4. Toolchain: proton-clang (kdrag0n) + cross-compile GCC
-# 5. Packaging: AnyKernel3 zip flashable (vlxlxlv/AnyKernel3 branch mt6781,
+#    hook lewat tabel syscall (CONFIG_KSU_TAMPER_SYSCALL_TABLE=y) + LSM,
+#    plus 6 hook lifecycle SUSFS ringan di KernelSU/kernel (tanpa hook manual
+#    di fs/exec.c, fs/open.c, fs/stat.c, security/security.c)
+# 2. SUSFS v2.4.0 (JackA1ltman/NonGKI_Kernel_Build_2nd patch 4.14 + glue
+#    parent-kernel: fs/susfs_ksu_glue.c, fs/xxksu_susfs_lifecycle.c,
+#    fs/Kconfig.susfs, kernel/reboot.c khusus SUSFS_MAGIC dari root)
+# 3. SUBLEVEL Makefile disamakan dengan kernel stok: uname -r 4.14.186-perf
+# 4. NoMount (branch dev milik maxsteeel/nomount) + compiler biner CLI nm
+# 5. Toolchain: proton-clang (kdrag0n) + cross-compile GCC
+# 6. Packaging: AnyKernel3 zip flashable (vlxlxlv/AnyKernel3 branch mt6781,
 #    eks-fjrXTR)
-# 6. BBR + fq, setelan memori (swappiness 100, zram lz4), tambalan
+# 7. BBR + fq, setelan memori (swappiness 100, zram lz4), tambalan
 #    CVE-2026-43499 dan WARN flush_work blk-core
 # Ketujuh sumber dipin SHA di pins.env; riwayat revisi di bawah dan di
 # pins.env.
@@ -1577,9 +1583,32 @@
 #     secret scanning = 0.
 # (c) Mundur: rilis build-20261121-174611 repo ini (revisi rosemary-3,
 #     commit 7cb30e1; belum diflash) atau titik AO (KSU f27e1f0d3).
+#
+# REVISI ROSEMARY-5 (2026-11-22) - xxKSU + SUSFS v2.4.0 via glue parent-kernel;
+# fgetpriority dicabut. Tanpa BakaSU dan tanpa Build-Kernel_scripts.
+# (a) SUSFS_PIN=8af9026a9 menggantikan FGETPRIORITY_PIN (jumlah pin tetap 7).
+#     Patch 4.14 JackA1ltman (21 berkas, v2.4.0 NON-GKI) disanitasi, diterapkan
+#     ke pohon kernel, diperbaiki lewat fixer task_mmu + fixer 4.14, lalu
+#     disambung ke xxKSU (syscall_table + LSM) lewat glue parent-kernel:
+#       - 6 hook lifecycle ringan di KernelSU/kernel (setuid_hook, kernel_umount,
+#         app_profile, boot_event, throne_tracker, ksu.c);
+#       - include/linux/xxksu_parent_bridge.h, fs/Kconfig.susfs,
+#         fs/susfs_ksu_glue.c (dispatcher 17 CMD_SUSFS + isi nyata susfs_ksu_sid
+#         & susfs_priv_app_sid), fs/xxksu_susfs_lifecycle.c;
+#       - kernel/reboot.c hanya mencegat (magic1 == 0xDEADBEEF && magic2 ==
+#         SUSFS_MAGIC && uid == 0) agar tidak bentrok atau double-call dengan
+#         hook_aarch64_reboot/hook_armeabi_reboot xxKSU, dan non-root tetap
+#         mendapat -EPERM;
+#       - kernel/kallsyms.c menyembunyikan simbol xxksu_*.
+# (b) fgetpriority (step integrasi, defconfig, assert, arsip, pin-watch,
+#     naikkan-pin) dicabut permanen - diganti CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y.
+# (c) Syarat runtime: fitur kernel_umount di xxKSU Manager wajib aktif agar
+#     TIF_PROC_UMOUNTED dipasang oleh xxksu_parent_finish_umount().
+# (d) Mundur: commit bf2adcd (rilis build-20261122-034128, xxKSU + NoMount +
+#     fgetpriority tanpa SUSFS) atau titik AO.
 # ============================================================
 
-name: Build Kernel Rosemary (xxKSU + NoMount)
+name: Build Kernel Rosemary (xxKSU + SUSFS + NoMount)
 
 on:
   # Tidak ada lagi input toggle add-on (revisi ke-11): NoMount selalu ikut,
@@ -1818,13 +1847,13 @@ jobs:
           # kepala loop ini, sekali lagi (secara tersirat, sebagai pola
           # [A-Z0-9_]+) di baris yang mengekspor ke $GITHUB_ENV. Sekarang satu
           # daftar dipakai keduanya.
+          # Revisi rosemary-5: FGETPRIORITY_PIN diganti SUSFS_PIN (jumlah tetap 7).
           # Revisi ke-120: tujuh nama (FGETPRIORITY_PIN ditambahkan; fgetpriority
           # built-in, hook getpriority/ioprio).
           # Revisi ke-118: enam nama (SCRIPTS_PIN dan SUSFS_PIN dicabut bersama
           # BakaSU + SUSFS).
-          WAJIB="KERNEL_PIN KSU_PIN
-                 NOMOUNT_PIN NOMOUNT_LOADER_PIN CLANG_PIN AK3_PIN
-                 FGETPRIORITY_PIN"
+          WAJIB="KERNEL_PIN KSU_PIN SUSFS_PIN
+                 NOMOUNT_PIN NOMOUNT_LOADER_PIN CLANG_PIN AK3_PIN"
           for n in $WAJIB; do
             N_BARIS="$(grep -cE "^${n}=[0-9a-f]{40}$" /tmp/pins.env || true)"
             if [ "$N_BARIS" != "1" ]; then
@@ -2038,10 +2067,106 @@ jobs:
             fi
           done
           if grep -rIqi 'susfs' KernelSU/kernel; then
-            echo "ERROR: pohon xxKSU kini menyebut susfs - andaian revisi ke-118 (tanpa SUSFS) perlu ditinjau:"
+            echo "ERROR: pohon xxKSU upstream kini menyebut susfs - audit ulang sebelum menerapkan patch lifecycle:"
             grep -rIli 'susfs' KernelSU/kernel | head
             exit 1
           fi
+
+          # Revisi rosemary-5: 6 hook lifecycle ringan di KernelSU/kernel agar
+          # xxKSU memberi tahu glue parent-kernel SUSFS (reset/deny task saat
+          # setuid/escape, set TIF_PROC_UMOUNTED + extra_works sesudah umount,
+          # start sdcard monitor + cache SELinux SID di post-fs-data, resolve
+          # ulang UID filter saat packages.list berubah di throne_tracker).
+          # Semua dibungkus #ifdef CONFIG_KSU_SUSFS; tidak menyentuh hook
+          # syscall_table atau LSM milik xxKSU.
+          cat > /tmp/xxksu_susfs_lifecycle.patch <<'XXKSU_LIFECYCLE_PATCH'
+          diff --git a/kernel/ksu.c b/kernel/ksu.c
+          --- a/kernel/ksu.c
+          +++ b/kernel/ksu.c
+          @@ -24,4 +24,7 @@
+           #include "kernel_includes.h"
+          +#ifdef CONFIG_KSU_SUSFS
+          +#include <linux/xxksu_parent_bridge.h>
+          +#endif
+           
+           // selinux includes
+           #include "avc_ss.h"
+          diff --git a/kernel/hook/setuid_hook.c b/kernel/hook/setuid_hook.c
+          --- a/kernel/hook/setuid_hook.c
+          +++ b/kernel/hook/setuid_hook.c
+          @@ -10,4 +10,8 @@
+           	if (unlikely(!!old_uid))
+           		return;
+           
+          +#ifdef CONFIG_KSU_SUSFS
+          +	xxksu_parent_reset_task();
+          +#endif
+          +
+           	if (IS_ENABLED(CONFIG_KSU_DEBUG))
+          @@ -25,3 +25,6 @@
+          +#ifdef CONFIG_KSU_SUSFS
+          +	xxksu_parent_deny_task();
+          +#endif
+           	// Handle kernel umount
+           	ksu_handle_umount(new, old);
+           	return;
+          diff --git a/kernel/feature/kernel_umount.c b/kernel/feature/kernel_umount.c
+          --- a/kernel/feature/kernel_umount.c
+          +++ b/kernel/feature/kernel_umount.c
+          @@ -125,4 +125,7 @@
+           	revert_creds(saved);
+          +#ifdef CONFIG_KSU_SUSFS
+          +	xxksu_parent_finish_umount();
+          +#endif
+           
+           	return 0;
+           }
+          diff --git a/kernel/policy/app_profile.c b/kernel/policy/app_profile.c
+          --- a/kernel/policy/app_profile.c
+          +++ b/kernel/policy/app_profile.c
+          @@ -154,4 +154,7 @@
+           	commit_creds(cred);
+          +#ifdef CONFIG_KSU_SUSFS
+          +	xxksu_parent_reset_task();
+          +#endif
+           
+           	if (ksu_is_seccomp_enabled())
+           		disable_seccomp();
+          diff --git a/kernel/runtime/boot_event.c b/kernel/runtime/boot_event.c
+          --- a/kernel/runtime/boot_event.c
+          +++ b/kernel/runtime/boot_event.c
+          @@ -14,4 +14,7 @@
+           	ksu_load_allow_list();
+          +#ifdef CONFIG_KSU_SUSFS
+          +	xxksu_parent_post_fs_data();
+          +#endif
+           
+           	// Sanity check for safe mode only needs early-boot input samples.
+           	ksu_stop_input_hook_runtime();
+          diff --git a/kernel/manager/throne_tracker.c b/kernel/manager/throne_tracker.c
+          --- a/kernel/manager/throne_tracker.c
+          +++ b/kernel/manager/throne_tracker.c
+          @@ -403,6 +403,9 @@ start_tt:
+           	// this in exchange of override creds, we escape this whole thread.
+           	escape_to_root_forced();
+           	throne_tracker_fn(prune_only);
+          +#ifdef CONFIG_KSU_SUSFS
+          +	xxksu_parent_packages_changed();
+          +#endif
+           
+           	pr_info("throne_tracker: pid: %d exit!\n", current->pid);
+           	return 0;
+          XXKSU_LIFECYCLE_PATCH
+          git -C KernelSU apply --check /tmp/xxksu_susfs_lifecycle.patch
+          git -C KernelSU apply /tmp/xxksu_susfs_lifecycle.patch
+          rm -f /tmp/xxksu_susfs_lifecycle.patch
+          N_LIFE=$(git -C KernelSU diff --name-only | wc -l)
+          test "$N_LIFE" = "6" || {
+            echo "ERROR: patch lifecycle xxKSU diharapkan menyentuh 6 berkas, aktual $N_LIFE"
+            git -C KernelSU diff --stat
+            exit 1
+          }
+          echo "OK: 6 hook lifecycle SUSFS diterapkan bersih di KernelSU/kernel"
 
           # KSU_VERSION xxKSU konstanta di Makefile (bukan hitungan commit),
           # jadi tidak ada lagi syarat clone penuh maupun urusan "-dirty".
@@ -2059,6 +2184,598 @@ jobs:
           echo "KSU_VER=$KSU_VER" >> "$GITHUB_ENV"
           echo "xxKSU commit: $KSU_HEAD (KSU_VERSION $KSU_VER)"
           echo "Integrasi xxKSU: SUKSES"
+
+      - name: Integrasikan SUSFS v2.4.0 (Jack 4.14 patch + glue xxKSU, di-PIN)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          # Revisi rosemary-5: patch sisi kernel SUSFS 4.14 (JackA1ltman) +
+          # glue parent-kernel untuk xxKSU (syscall_table + LSM). Tanpa BakaSU
+          # dan tanpa Build-Kernel_scripts.
+          PATCH_RAW=/tmp/susfs_414_raw.patch
+          PATCH_CLEAN=/tmp/susfs_414_clean.patch
+          curl -fLSs --retry 3 \
+            "https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/${SUSFS_PIN}/Patches/Patch/susfs_patch_to_4.14.patch" \
+            -o "$PATCH_RAW"
+          test -s "$PATCH_RAW" || { echo "ERROR: patch SUSFS 4.14 kosong"; exit 1; }
+
+          # Lapis 1 sanitizer: buang section .git/ bila pernah mencemari patch,
+          # lalu normalkan baris hunk '++' ganda (bukan '+++').
+          awk '
+            /^diff --git / { skip = ($3 ~ /^a\/\.git\// || $4 ~ /^b\/\.git\//) }
+            !skip { print }
+          ' "$PATCH_RAW" | sed -E 's/^\+\+([^+])/+\1/' > "$PATCH_CLEAN"
+          if grep -qE '^\+\+[^+]' "$PATCH_CLEAN"; then
+            echo "ERROR: masih ada sisa baris ++ di patch SUSFS sesudah sanitasi"
+            exit 1
+          fi
+
+          # Terapkan patch; hanya fs/proc/task_mmu.c.rej yang diharapkan
+          # (rosemary-13 memakai gaya 4.19+ untuk smap_gather_stats/show_smap).
+          PATCH_RC=0
+          patch -p1 --no-backup-if-mismatch < "$PATCH_CLEAN" > /tmp/susfs_patch.log 2>&1 || PATCH_RC=$?
+          cat /tmp/susfs_patch.log
+          rm -f "$PATCH_RAW" "$PATCH_CLEAN"
+
+          mkdir -p patch_rejects
+          UNEXPECTED=""
+          while IFS= read -r rej; do
+            [ -n "$rej" ] || continue
+            rel="${rej#./}"
+            if [ "$rel" = "fs/proc/task_mmu.c.rej" ]; then
+              mkdir -p "patch_rejects/$(dirname "$rel")"
+              mv "$rej" "patch_rejects/$rel"
+            else
+              UNEXPECTED="${UNEXPECTED}${rel}"$'\n'
+            fi
+          done < <(find . -path './.git' -prune -o -path './patch_rejects' -prune -o -name '*.rej' -print)
+
+          if [ -n "$UNEXPECTED" ]; then
+            echo "ERROR: ada reject SUSFS di file yang belum ditangani:"
+            printf '%s' "$UNEXPECTED" | sed 's/^/  - /'
+            exit 1
+          fi
+          if [ "$PATCH_RC" != "0" ] && [ ! -f patch_rejects/fs/proc/task_mmu.c.rej ]; then
+            echo "ERROR: patch keluar $PATCH_RC tanpa reject task_mmu.c.rej"
+            exit 1
+          fi
+          echo "OK: patch SUSFS 4.14 diterapkan (audit reject bersih)"
+
+          # ---- Fixer 1: fs/proc/task_mmu.c ----
+          python3 - <<'FIX_TASK_MMU_PY'
+          import re, sys
+
+          PATH = "fs/proc/task_mmu.c"
+          INC = ("#if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)\n"
+                 "#include <linux/susfs_def.h>\n"
+                 "#endif\n")
+          GUARD = ("#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n"
+                   "\tif (vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))\n"
+                   "\t\treturn 0;\n"
+                   "#endif\n")
+
+          s = open(PATH, encoding='utf-8', errors='surrogateescape').read()
+          if "susfs_def.h" not in s:
+              anchor = "#include <linux/mm_inline.h>\n"
+              if s.count(anchor) != 1:
+                  sys.exit("task_mmu: anchor mm_inline.h ketemu %d kali (harus 1)" % s.count(anchor))
+              s = s.replace(anchor, anchor + INC, 1)
+              print("task_mmu: include susfs_def.h ditambahkan")
+
+          misplaced = re.compile(
+              r'\n#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n'
+              r'\tif \(vma->vm_file && SUSFS_IS_INODE_SUS_MAP\(file_inode\(vma->vm_file\)\)\)\n'
+              r'\t\treturn 0;\n'
+              r'#endif\n\n(\tsmaps_walk\.private = mss;\n)')
+          n = len(misplaced.findall(s))
+          if n == 1:
+              s = misplaced.sub(lambda m: "\n" + m.group(1), s)
+              print("task_mmu: guard SUS_MAP salah tempat di smap_gather_stats() dihapus")
+          elif n > 1:
+              sys.exit("task_mmu: guard salah tempat ketemu %d kali" % n)
+
+          if not re.search(r'static int show_smap\(struct seq_file \*m, void \*v\)\n\{\n[^}]*?SUSFS_IS_INODE_SUS_MAP', s):
+              anchor = ("static int show_smap(struct seq_file *m, void *v)\n"
+                        "{\n"
+                        "\tstruct vm_area_struct *vma = v;\n"
+                        "\tstruct mem_size_stats mss;\n\n")
+              if s.count(anchor) != 1:
+                  sys.exit("task_mmu: anchor show_smap() ketemu %d kali (harus 1)" % s.count(anchor))
+              s = s.replace(anchor, anchor + GUARD + "\n", 1)
+              print("task_mmu: guard SUS_MAP dipasang di show_smap()")
+
+          open(PATH, 'w', encoding='utf-8', errors='surrogateescape').write(s)
+
+          s = open(PATH, encoding='utf-8', errors='surrogateescape').read()
+          if "susfs_def.h" not in s:
+              sys.exit("task_mmu: include susfs_def.h hilang")
+          b = s.find("static void smap_gather_stats(")
+          e = s.find("/* Show the contents common for smaps")
+          if b < 0 or e <= b:
+              sys.exit("task_mmu: urutan smap_gather_stats() tidak valid (b=%d, e=%d)" % (b, e))
+          if "return 0;" in s[b:e]:
+              sys.exit("task_mmu: masih ada 'return 0;' di smap_gather_stats()")
+          print("task_mmu: OK")
+          FIX_TASK_MMU_PY
+
+          # ---- Fixer 2: perbaikan bug SUSFS 4.14 (IDA lock super.c/namespace.c + jaring assert) ----
+          python3 - <<'FIX_SUSFS_414_PY'
+          import re, sys
+
+          def rw(path, fn):
+              with open(path, encoding='utf-8', errors='surrogateescape') as f:
+                  s = f.read()
+              out = fn(s)
+              if out is not None:
+                  with open(path, 'w', encoding='utf-8', errors='surrogateescape') as f:
+                      f.write(out)
+
+          def need(s, txt, path, label, n=1):
+              c = s.count(txt)
+              if c != n:
+                  sys.exit("susfs-fix: anchor '%s' ketemu %d kali (harus %d) di %s" % (label, c, n, path))
+
+          MNT_PAT = r'^[ \t]*stat->mnt_id = real_mount\(path->mnt\)->mnt_id;\n'
+          def fix_stat_mnt_id(s):
+              n = len(re.findall(MNT_PAT, s, re.M))
+              if n == 0:
+                  return None
+              if n != 2:
+                  sys.exit("susfs-fix: assignment stat->mnt_id aktif %d kali (harus 0/2)" % n)
+              return re.sub(MNT_PAT, '', s, flags=re.M)
+
+          STATFS_ANCHOR = "static int susfs_statfs_by_dentry("
+          STATFS_DECL = ("extern bool susfs_is_inode_sus_kstat(struct inode *inode, bool *out_is_fuse);\n"
+                         "extern int susfs_sus_kstat_spoof_vfs_statfs(struct inode *inode, struct kstatfs *buf, bool *is_fuse);\n")
+          def fix_statfs(s):
+              i_decl = s.find("extern int susfs_sus_kstat_spoof_vfs_statfs")
+              i_use = s.find(STATFS_ANCHOR)
+              if i_use < 0:
+                  sys.exit("susfs-fix: susfs_statfs_by_dentry() tidak ketemu di fs/statfs.c")
+              if 0 <= i_decl < i_use:
+                  return None
+              need(s, STATFS_ANCHOR, 'fs/statfs.c', STATFS_ANCHOR)
+              return s.replace(STATFS_ANCHOR, STATFS_DECL + STATFS_ANCHOR, 1)
+
+          CALL_BAD = "susfs_mark_inode_sus_kstat(new_entry->info.target_pathname, new_entry);\n"
+          CALL_OK = "susfs_mark_inode_sus_kstat(new_entry->info.target_pathname, new_entry, false);\n"
+          def fix_susfs(s):
+              changed = False
+              if "#include <linux/security.h>\n" not in s:
+                  need(s, "#include <linux/fs.h>\n", 'fs/susfs.c', '#include <linux/fs.h>')
+                  s = s.replace("#include <linux/fs.h>\n", "#include <linux/fs.h>\n#include <linux/security.h>\n", 1)
+                  changed = True
+              if CALL_BAD in s:
+                  need(s, CALL_BAD, 'fs/susfs.c', 'susfs_mark_inode_sus_kstat 2-arg')
+                  s = s.replace(CALL_BAD, CALL_OK, 1)
+                  changed = True
+              # Pastikan SUSFS_LOGI_RL/SUSFS_LOGE_RL ada juga saat ENABLE_LOG mati.
+              rl_old = "#else\n#define SUSFS_LOGI(fmt, ...)\n#define SUSFS_LOGE(fmt, ...)\n#endif\n"
+              rl_new = ("#else\n#define SUSFS_LOGI(fmt, ...)\n#define SUSFS_LOGE(fmt, ...)\n"
+                        "#define SUSFS_LOGI_RL(fmt, ...)\n#define SUSFS_LOGE_RL(fmt, ...)\n#endif\n")
+              if rl_old in s:
+                  s = s.replace(rl_old, rl_new, 1)
+                  changed = True
+              return s if changed else None
+
+          FD_OLD = "\t\tgoto orig_flow;\n\t}\norig_flow:\n#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+          FD_NEW = "\t\tgoto orig_flow;\n\t\t}\n\t}\norig_flow:\n#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+          def fix_fd(s):
+              if FD_NEW in s:
+                  return None
+              need(s, FD_OLD, 'fs/proc/fd.c', 'goto orig_flow')
+              return s.replace(FD_OLD, FD_NEW, 1)
+
+          SUPER_OLD = ("\t\t\tdev = ida_simple_get(&unnamed_dev_ida, DEFAULT_KSU_MNT_MINOR_DEV,\n"
+                       "\t\t\t\t\t     (1 << MINORBITS), GFP_ATOMIC);\n")
+          SUPER_NEW = ("\t\t\tspin_lock(&unnamed_dev_lock);\n" + SUPER_OLD +
+                       "\t\t\tspin_unlock(&unnamed_dev_lock);\n")
+          def fix_super_ida(s):
+              if SUPER_NEW in s or "ida_simple_get(&unnamed_dev_ida" not in s:
+                  return None
+              need(s, SUPER_OLD, 'fs/super.c', 'ida_simple_get unnamed_dev_ida')
+              print("super.c: ida_simple_get(&unnamed_dev_ida) dibungkus unnamed_dev_lock")
+              return s.replace(SUPER_OLD, SUPER_NEW, 1)
+
+          NS_OLD = "\t\tres = ida_simple_get(&mnt_id_ida, DEFAULT_KSU_MNT_ID, 0, GFP_KERNEL);\n"
+          NS_NEW = ("\t\tdo {\n"
+                    "\t\t\tif (!ida_pre_get(&mnt_id_ida, GFP_KERNEL)) {\n"
+                    "\t\t\t\tres = -ENOMEM;\n"
+                    "\t\t\t\tgoto out_free_cache;\n"
+                    "\t\t\t}\n"
+                    "\t\t\tspin_lock(&mnt_id_lock);\n"
+                    "\t\t\tres = ida_get_new_above(&mnt_id_ida, DEFAULT_KSU_MNT_ID, &mnt->mnt_id);\n"
+                    "\t\t\tspin_unlock(&mnt_id_lock);\n"
+                    "\t\t} while (res == -EAGAIN);\n"
+                    "\t\tif (res < 0)\n"
+                    "\t\t\tgoto out_free_cache;\n"
+                    "\t\tres = mnt->mnt_id;\n")
+          def fix_namespace_ida(s):
+              if "ida_get_new_above(&mnt_id_ida, DEFAULT_KSU_MNT_ID" in s or "ida_simple_get(&mnt_id_ida" not in s:
+                  return None
+              need(s, NS_OLD, 'fs/namespace.c', 'ida_simple_get mnt_id_ida')
+              print("namespace.c: mnt_id ksu dipindah ke ida_pre_get+ida_get_new_above di bawah mnt_id_lock")
+              return s.replace(NS_OLD, NS_NEW, 1)
+
+          rw('fs/stat.c', fix_stat_mnt_id)
+          rw('fs/statfs.c', fix_statfs)
+          rw('fs/susfs.c', fix_susfs)
+          rw('fs/proc/fd.c', fix_fd)
+          rw('fs/super.c', fix_super_ida)
+          rw('fs/namespace.c', fix_namespace_ida)
+
+          def rd(p):
+              return open(p, encoding='utf-8', errors='surrogateescape').read()
+
+          err = []
+          st = rd('fs/stat.c')
+          if re.search(MNT_PAT, st, re.M): err.append("fs/stat.c masih punya stat->mnt_id aktif")
+          if re.search(r'^\+', st, re.M): err.append("fs/stat.c masih punya baris '+'")
+          sf = rd('fs/statfs.c')
+          i_decl, i_use = sf.find('extern int susfs_sus_kstat_spoof_vfs_statfs'), sf.find(STATFS_ANCHOR)
+          if i_use < 0 or not (0 <= i_decl < i_use): err.append("fs/statfs.c extern salah posisi")
+          su = rd('fs/susfs.c')
+          if '#include <linux/security.h>' not in su: err.append("fs/susfs.c tanpa <linux/security.h>")
+          if CALL_BAD in su: err.append("fs/susfs.c call 2-argumen")
+          fd = rd('fs/proc/fd.c')
+          if fd.count('{') != fd.count('}'): err.append("fs/proc/fd.c brace tidak seimbang")
+          sp = rd('fs/super.c')
+          if 'ida_simple_get(&unnamed_dev_ida' in sp and SUPER_NEW not in sp: err.append("fs/super.c ida race")
+          if sp.count('spin_lock(&unnamed_dev_lock);') != sp.count('spin_unlock(&unnamed_dev_lock);'): err.append("fs/super.c lock tak seimbang")
+          ns = rd('fs/namespace.c')
+          if 'ida_simple_get(&mnt_id_ida' in ns: err.append("fs/namespace.c ida race")
+          if ns.count('spin_lock(&mnt_id_lock);') != ns.count('spin_unlock(&mnt_id_lock);'): err.append("fs/namespace.c lock tak seimbang")
+          for _p, _t in (('fs/super.c', sp), ('fs/namespace.c', ns)):
+              if _t.count('{') != _t.count('}'): err.append(f"{_p} brace tidak seimbang")
+          if err:
+              sys.exit("susfs-fix GAGAL: " + "; ".join(err))
+          print("susfs-fix: OK, 6 file SUSFS diverifikasi")
+          FIX_SUSFS_414_PY
+
+          # ---- Tulis glue parent-kernel xxKSU <-> SUSFS v2.4.0 ----
+          cat > include/linux/xxksu_parent_bridge.h <<'XXKSU_BRIDGE_H'
+          /* SPDX-License-Identifier: GPL-2.0 */
+          #ifndef _LINUX_XXKSU_PARENT_BRIDGE_H
+          #define _LINUX_XXKSU_PARENT_BRIDGE_H
+
+          #include <linux/types.h>
+
+          void xxksu_parent_reset_task(void);
+          void xxksu_parent_deny_task(void);
+          void xxksu_parent_finish_umount(void);
+          void xxksu_parent_post_fs_data(void);
+          void xxksu_parent_packages_changed(void);
+
+          #endif /* _LINUX_XXKSU_PARENT_BRIDGE_H */
+          XXKSU_BRIDGE_H
+
+          cat > fs/Kconfig.susfs <<'KCONFIG_SUSFS'
+          # SPDX-License-Identifier: GPL-2.0
+          menu "SUSFS (parent-kernel options for xxKSU)"
+          	depends on KSU
+
+          config KSU_SUSFS
+          	bool "SUSFS"
+          	depends on KSU = y && THREAD_INFO_IN_TASK && 64BIT
+          	default y
+
+          config KSU_SUSFS_SUS_PATH
+          	bool "Hide suspicious paths"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_SUS_MOUNT
+          	bool "Hide suspicious mounts"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_SUS_KSTAT
+          	bool "Spoof suspicious kstat"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_SPOOF_UNAME
+          	bool "Spoof uname"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_ENABLE_LOG
+          	bool "Log SUSFS messages to the kernel log"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          	bool "Hide ksu and susfs symbols from /proc/kallsyms"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          	bool "Spoof /proc/cmdline"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_OPEN_REDIRECT
+          	bool "Redirect opens of a path to another path"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_SUS_MAP
+          	bool "Hide mapped files from /proc/<pid>/maps"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_PRIORITY_UID_FILTER
+          	bool "Priority UID filter (getpriority/ioprio hiding)"
+          	depends on KSU_SUSFS
+          	default y
+
+          endmenu
+          KCONFIG_SUSFS
+
+          cat > fs/susfs_ksu_glue.c <<'SUSFS_KSU_GLUE_C'
+          // SPDX-License-Identifier: GPL-2.0
+          /*
+           * Parent-kernel glue connecting SUSFS v2.4.0 (JackA1ltman 4.14 patch)
+           * with xxKSU (backslashxx/KernelSU, syscall-table + LSM hook mode).
+           */
+          #include <linux/compiler.h>
+          #include <linux/init.h>
+          #include <linux/security.h>
+          #include <linux/types.h>
+          #include <linux/susfs.h>
+          #include <linux/susfs_def.h>
+
+          #ifdef CONFIG_KSU_SUSFS
+
+          extern bool is_ksu_domain(void) __weak;
+
+          u32 susfs_ksu_sid __read_mostly;
+          u32 susfs_priv_app_sid __read_mostly;
+
+          bool susfs_is_current_ksu_domain(void)
+          {
+          	return is_ksu_domain ? is_ksu_domain() : false;
+          }
+
+          void susfs_cache_selinux_sids(void)
+          {
+          	u32 sid = 0;
+
+          	if (!security_secctx_to_secid("u:r:ksu:s0",
+          				      sizeof("u:r:ksu:s0") - 1, &sid))
+          		susfs_ksu_sid = sid;
+
+          	sid = 0;
+          	if (!security_secctx_to_secid("u:r:priv_app:s0:c512,c768",
+          				      sizeof("u:r:priv_app:s0:c512,c768") - 1,
+          				      &sid))
+          		susfs_priv_app_sid = sid;
+          }
+
+          int susfs_ksu_handle_cmd(unsigned int cmd, void __user **arg)
+          {
+          	switch (cmd) {
+          #ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
+          	case CMD_SUSFS_SET_PRIORITY_UID_FILTER:
+          		susfs_set_priority_uid_filter(arg);
+          		break;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+          	case CMD_SUSFS_ADD_SUS_PATH:
+          		susfs_add_sus_path(arg);
+          		break;
+          	case CMD_SUSFS_ADD_SUS_PATH_LOOP:
+          		susfs_add_sus_path_loop(arg);
+          		break;
+          	case CMD_SUSFS_SET_SUS_PATH_UID_FILTER:
+          		susfs_set_sus_path_uid_filter(arg);
+          		break;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+          	case CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS:
+          		susfs_set_hide_sus_mnts_for_non_su_procs(arg);
+          		break;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+          	case CMD_SUSFS_ADD_SUS_KSTAT:
+          	case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:
+          		susfs_add_sus_kstat(arg);
+          		break;
+          	case CMD_SUSFS_UPDATE_SUS_KSTAT:
+          		susfs_update_sus_kstat(arg);
+          		break;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+          	case CMD_SUSFS_SET_UNAME:
+          		susfs_set_uname(arg);
+          		break;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+          	case CMD_SUSFS_ENABLE_LOG:
+          		susfs_enable_log(arg);
+          		break;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          	case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:
+          		susfs_set_cmdline_or_bootconfig(arg);
+          		break;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+          	case CMD_SUSFS_ADD_OPEN_REDIRECT:
+          		susfs_add_open_redirect(arg);
+          		break;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+          	case CMD_SUSFS_ADD_SUS_MAP:
+          		susfs_add_sus_map(arg);
+          		break;
+          #endif
+          	case CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING:
+          		if (!susfs_ksu_sid)
+          			susfs_cache_selinux_sids();
+          		susfs_set_avc_log_spoofing(arg);
+          		break;
+          	case CMD_SUSFS_SHOW_ENABLED_FEATURES:
+          		susfs_get_enabled_features(arg);
+          		break;
+          	case CMD_SUSFS_SHOW_VARIANT:
+          		susfs_show_variant(arg);
+          		break;
+          	case CMD_SUSFS_SHOW_VERSION:
+          		susfs_show_version(arg);
+          		break;
+          	default:
+          		break;
+          	}
+          	return 0;
+          }
+
+          static int __init susfs_ksu_glue_init(void)
+          {
+          	susfs_init();
+          	return 0;
+          }
+          late_initcall(susfs_ksu_glue_init);
+
+          #endif /* CONFIG_KSU_SUSFS */
+          SUSFS_KSU_GLUE_C
+
+          cat > fs/xxksu_susfs_lifecycle.c <<'XXKSU_LIFECYCLE_C'
+          // SPDX-License-Identifier: GPL-2.0
+          /*
+           * Lifecycle bridge callbacks invoked from xxKSU.
+           */
+          #include <linux/sched.h>
+          #include <linux/thread_info.h>
+          #include <linux/workqueue.h>
+          #include <linux/susfs.h>
+          #include <linux/susfs_def.h>
+          #include <linux/xxksu_parent_bridge.h>
+
+          extern struct work_struct susfs_extra_works;
+          extern void susfs_cache_selinux_sids(void);
+
+          void xxksu_parent_reset_task(void)
+          {
+          	susfs_clear_current_proc_no_su();
+          	susfs_clear_current_proc_umounted();
+          	susfs_clear_current_proc_umounted_for_zygote_next();
+          }
+
+          void xxksu_parent_deny_task(void)
+          {
+          	susfs_set_current_proc_no_su();
+          }
+
+          void xxksu_parent_finish_umount(void)
+          {
+          	susfs_set_current_proc_umounted();
+          	schedule_work(&susfs_extra_works);
+          }
+
+          void xxksu_parent_post_fs_data(void)
+          {
+          	susfs_cache_selinux_sids();
+          	susfs_start_sdcard_monitor_fn();
+          }
+
+          void xxksu_parent_packages_changed(void)
+          {
+          #ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
+          	susfs_parse_priority_app_strings();
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+          	susfs_parse_sus_path_app_strings();
+          #endif
+          }
+          XXKSU_LIFECYCLE_C
+
+          # ---- Sambung glue ke fs/Kconfig, fs/Makefile, kernel/reboot.c, kernel/kallsyms.c ----
+          python3 - <<'WIRE_SUSFS_GLUE_PY'
+          import sys
+
+          def ganti(path, lama, baru, label):
+              with open(path, encoding='utf-8', errors='surrogateescape', newline='') as f:
+                  s = f.read()
+              eol = '\r\n' if '\r\n' in s else '\n'
+              lama_e = lama.replace('\n', eol)
+              baru_e = baru.replace('\n', eol)
+              if baru_e in s:
+                  print(f"[=] {label}: sudah terpasang")
+                  return
+              n = s.count(lama_e)
+              if n != 1:
+                  sys.exit(f"ERROR: {label}: anchor di {path} cocok {n}x (harus 1)")
+              with open(path, 'w', encoding='utf-8', errors='surrogateescape', newline='') as f:
+                  f.write(s.replace(lama_e, baru_e, 1))
+              print(f"[+] {label}")
+
+          # fs/Kconfig: sisipkan tepat sebelum endmenu terakhir (tahan CRLF & kompatibel NoMount)
+          with open("fs/Kconfig", encoding='utf-8', errors='surrogateescape', newline='') as f:
+              k_raw = f.read()
+          k_eol = '\r\n' if '\r\n' in k_raw else '\n'
+          k_lines = k_raw.splitlines(keepends=True)
+          k_entry = 'source "fs/Kconfig.susfs"' + k_eol
+          if any(l.strip() == 'source "fs/Kconfig.susfs"' for l in k_lines):
+              print("[=] fs/Kconfig -> source fs/Kconfig.susfs: sudah terpasang")
+          else:
+              idxs = [i for i, l in enumerate(k_lines) if l.strip() == "endmenu"]
+              if not idxs:
+                  sys.exit("ERROR: tidak ada 'endmenu' di fs/Kconfig")
+              k_lines.insert(idxs[-1], k_entry)
+              with open("fs/Kconfig", 'w', encoding='utf-8', errors='surrogateescape', newline='') as f:
+                  f.writelines(k_lines)
+              print("[+] fs/Kconfig -> source fs/Kconfig.susfs")
+
+          ganti("fs/Makefile",
+                "obj-$(CONFIG_KSU_SUSFS) += susfs.o\n",
+                "obj-$(CONFIG_KSU_SUSFS) += susfs.o susfs_ksu_glue.o xxksu_susfs_lifecycle.o\n",
+                "fs/Makefile -> tambah susfs_ksu_glue.o + xxksu_susfs_lifecycle.o")
+
+          ganti("kernel/reboot.c",
+                "#include <linux/syscore_ops.h>\n#include <linux/uaccess.h>\n",
+                "#include <linux/syscore_ops.h>\n#include <linux/uaccess.h>\n"
+                "#ifdef CONFIG_KSU_SUSFS\n"
+                "#include <linux/cred.h>\n"
+                "#include <linux/susfs_def.h>\n"
+                "#define SUSFS_KSU_INSTALL_MAGIC1 0xDEADBEEFU\n"
+                "extern int susfs_ksu_handle_cmd(unsigned int cmd, void __user **arg);\n"
+                "#endif\n",
+                "kernel/reboot.c -> include & deklarasi SUSFS")
+
+          ganti("kernel/reboot.c",
+                "\t/* We only trust the superuser with rebooting the system. */\n",
+                "#ifdef CONFIG_KSU_SUSFS\n"
+                "\tif (system_state == SYSTEM_RUNNING &&\n"
+                "\t    (u32)magic1 == SUSFS_KSU_INSTALL_MAGIC1 &&\n"
+                "\t    (u32)magic2 == SUSFS_MAGIC &&\n"
+                "\t    uid_eq(current_uid(), GLOBAL_ROOT_UID)) {\n"
+                "\t\treturn susfs_ksu_handle_cmd(cmd, &arg);\n"
+                "\t}\n"
+                "#endif\n\n"
+                "\t/* We only trust the superuser with rebooting the system. */\n",
+                "kernel/reboot.c -> dispatch SUSFS_MAGIC root-only")
+
+          ganti("kernel/kallsyms.c",
+                '\t\t\tsusfs_starts_with(iter->name, "__ksu_") ||\n'
+                '\t\t\tsusfs_starts_with(iter->name, "susfs_") ||\n',
+                '\t\t\tsusfs_starts_with(iter->name, "__ksu_") ||\n'
+                '\t\t\tsusfs_starts_with(iter->name, "xxksu_") ||\n'
+                '\t\t\tsusfs_starts_with(iter->name, "susfs_") ||\n',
+                "kernel/kallsyms.c -> sembunyikan simbol xxksu_*")
+          WIRE_SUSFS_GLUE_PY
+
+          # Verifikasi akhir integrasi SUSFS + glue
+          grep -q 'CFLAGS_susfs.o += -DSUSFS_KERNEL_READ_NEW' fs/Makefile || {
+            echo "ERROR: CFLAGS_susfs.o += -DSUSFS_KERNEL_READ_NEW hilang dari fs/Makefile"
+            exit 1
+          }
+          SUSFS_VER=$(sed -n 's/^#define SUSFS_VERSION "\([^"]*\)".*/\1/p' include/linux/susfs.h | head -n1)
+          test -n "$SUSFS_VER" || { echo "ERROR: SUSFS_VERSION tidak terbaca dari include/linux/susfs.h"; exit 1; }
+          echo "SUSFS_SHA=${SUSFS_PIN:0:9}" >> "$GITHUB_ENV"
+          echo "SUSFS_VER=$SUSFS_VER" >> "$GITHUB_ENV"
+          echo "SUSFS $SUSFS_VER @ ${SUSFS_PIN:0:9} + glue xxKSU: SUKSES"
 
       - name: Bersihkan -dirty dari setlocalversion
         working-directory: kernel
@@ -2650,151 +3367,6 @@ jobs:
           echo "NOMOUNT_SHA=$(git -C NoMount rev-parse --short=9 HEAD)" >> "$GITHUB_ENV"
           echo "NoMount branch dev: OK"
 
-      - name: Integrasikan fgetpriority (hook getpriority/ioprio, built-in, di-PIN)
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-
-          # fgetpriority = LKM kecil backslashxx (penulis xxKSU) yang menyaring
-          # hasil sys_getpriority/setpriority/ioprio_get/ioprio_set, supaya proses
-          # app tidak terdeteksi lewat prioritas. Pengganti SUSFS priority-uid-
-          # filter yang hilang saat pindah ke xxKSU (revisi ke-118). Dikompilasi
-          # BUILT-IN (CONFIG_FGETPRIORITY=y), bukan modul: jalur "just compile it
-          # in" resmi penulisnya, jadi bebas masalah LKM (init_user_ns tidak
-          # diekspor ke modul = issue #14, vermagic). FGETPRIORITY_PIN dari
-          # pins.env (revisi ke-120).
-          #
-          # Dukungan 4.14 ADA tapi tidak diuji upstream (matriks DDK mulai 5.10).
-          # Yang membuatnya jalan di 4.14 dijaga eksplisit di bawah; kalau
-          # upstream refactor dan satu penjaga jatuh, build GAGAL di sini - bukan
-          # diam-diam di HP. Jaring terakhir saat runtime: kalau patch cabang
-          # B/BL gagal, init jatuh ke kprobe pada find_user.
-
-          for p in fgetpriority drivers/fgetpriority; do
-            if [ -e "$p" ] || [ -L "$p" ]; then
-              echo "ERROR: $p sudah ada sebelum integrasi - source kernel berubah."
-              exit 1
-            fi
-          done
-
-          # Clone + ambil SHA pin per-hash (orphan-proof, pola sama NoMount).
-          git clone -q https://github.com/aerath-stuff/fgetpriority fgp-src
-          git -C fgp-src fetch -q origin "$FGETPRIORITY_PIN" || true
-          git -C fgp-src checkout -q "$FGETPRIORITY_PIN"
-          test "$(git -C fgp-src rev-parse HEAD)" = "$FGETPRIORITY_PIN" || {
-            echo "ERROR: fgetpriority tidak ter-checkout ke pin $FGETPRIORITY_PIN"
-            echo "HEAD aktual: $(git -C fgp-src rev-parse HEAD)"
-            exit 1
-          }
-
-          # Unity build: hanya main.o; main.c meng-include routine_*.c + header.
-          # Revisi ke-124: daftar berkas tidak lagi ditulis satu per satu.
-          # Upstream 9a38e02b0 mengganti nama arm64_branch_insn.h menjadi
-          # arm64_branch_patch.h, dan daftar lama membuat build GAGAL di sini.
-          # Kini semua *.c dan *.h di kernel/ upstream disalin, lalu setiap
-          # '#include "..."' lokal wajib ada di drivers/fgetpriority/. Kalau
-          # upstream memindah header ke luar kernel/, build tetap berhenti di
-          # sini dengan pesan jelas, bukan di tengah compile. Berlaku juga
-          # saat pin mundur ke 178dd7479 (nama header lama).
-          mkdir drivers/fgetpriority
-          for f in main.c routine_kp.c routine_raw.c Makefile Kconfig; do
-            test -s "fgp-src/kernel/$f" || { echo "ERROR: fgp-src/kernel/$f tidak ada - struktur upstream berubah"; exit 1; }
-          done
-          cp fgp-src/kernel/*.c fgp-src/kernel/*.h fgp-src/kernel/Makefile fgp-src/kernel/Kconfig drivers/fgetpriority/
-          for f in drivers/fgetpriority/*.c drivers/fgetpriority/*.h; do
-            sed -nE 's/^[[:space:]]*#[[:space:]]*include[[:space:]]+"([^"]+)".*/\1/p' "$f" | while IFS= read -r inc; do
-              test -s "drivers/fgetpriority/$inc" || {
-                echo "ERROR: $f meng-include \"$inc\" yang tidak ada di kernel/ upstream - audit ulang"
-                exit 1
-              }
-            done
-          done
-          echo "OK: berkas fgetpriority disalin:" drivers/fgetpriority/*
-
-          # Kconfig upstream: 'config FGETPRIORITY' tristate default m, depends on
-          # ARM64 && KALLSYMS. Dipaksa =y lewat defconfig; pastikan simbolnya ada
-          # supaya Kconfig tidak membuangnya diam-diam.
-          test "$(grep -cxF 'config FGETPRIORITY' drivers/fgetpriority/Kconfig)" = "1" || {
-            echo "ERROR: 'config FGETPRIORITY' tidak ketemu tepat 1x di Kconfig - audit ulang"
-            exit 1
-          }
-          grep -qF 'obj-$(CONFIG_FGETPRIORITY) += fgetpriority.o' drivers/fgetpriority/Makefile || {
-            echo "ERROR: Makefile fgetpriority tidak lagi membangun fgetpriority.o - audit ulang"
-            exit 1
-          }
-          grep -qF 'fgetpriority-y := main.o' drivers/fgetpriority/Makefile || {
-            echo "ERROR: Makefile fgetpriority tidak lagi unity (main.o) - audit ulang"
-            exit 1
-          }
-
-          # Sambung ke drivers/Kconfig (sisip sebelum endmenu terakhir, idempoten).
-          python3 - << 'PYEOF'
-          p = "drivers/Kconfig"
-          kc = 'source "drivers/fgetpriority/Kconfig"\n'
-          with open(p) as f:
-              lines = f.readlines()
-          if kc in lines:
-              print("OK: source fgetpriority/Kconfig sudah ada di drivers/Kconfig")
-          else:
-              idx = [i for i, l in enumerate(lines) if l.strip() == "endmenu"]
-              if not idx:
-                  print("ERROR: tidak ada 'endmenu' di drivers/Kconfig")
-                  raise SystemExit(1)
-              lines.insert(idx[-1], kc)
-              with open(p, "w") as f:
-                  f.writelines(lines)
-              print("Disisipkan source fgetpriority/Kconfig sebelum endmenu terakhir")
-          PYEOF
-
-          # Sambung ke drivers/Makefile (idempoten).
-          MK='obj-$(CONFIG_FGETPRIORITY) += fgetpriority/'
-          if [ "$(grep -cxF "$MK" drivers/Makefile)" = "0" ]; then
-            printf '\n%s\n' "$MK" >> drivers/Makefile
-          fi
-
-          KC='source "drivers/fgetpriority/Kconfig"'
-          N_KC=$(grep -cxF "$KC" drivers/Kconfig || true)
-          N_MK=$(grep -cxF "$MK" drivers/Makefile || true)
-          if [ "$N_KC" != "1" ] || [ "$N_MK" != "1" ]; then
-            echo "ERROR: entri fgetpriority drivers/Kconfig=$N_KC drivers/Makefile=$N_MK (masing-masing wajib 1)"
-            grep -n fgetpriority drivers/Kconfig drivers/Makefile || true
-            exit 1
-          fi
-          echo "OK: drivers/Kconfig + drivers/Makefile berisi tepat satu entri fgetpriority"
-
-          # ---- PENJAGA 4.14 BUILT-IN (revisi ke-120) ----
-          M=drivers/fgetpriority
-          # (1) Nama syscall <4.17 pakai bentuk telanjang (sys_getpriority), bukan
-          #     __arm64_sys_. Kernel 4.14 < 4.17, cabang ini WAJIB ada - kalau
-          #     hilang, 4.14 mencari simbol __arm64_sys_* yang tidak ada.
-          if ! grep -qF 'kallsyms_lookup_name("__arm64_" name)' "$M/routine_raw.c" \
-             || ! grep -qF 'kallsyms_lookup_name(name)' "$M/routine_raw.c"; then
-            echo "ERROR: syscall_lookup kehilangan cabang nama telanjang (<4.17) - audit ulang"
-            exit 1
-          fi
-          # (2) copy_from_kernel_nofault punya fallback <5.8 (4.14 belum punya API-nya).
-          grep -qF 'KERNEL_VERSION(5, 8, 0)' "$M/main.c" || {
-            echo "ERROR: fallback copy_from_kernel_nofault (<5.8) hilang - 4.14 tidak punya simbol itu"
-            exit 1
-          }
-          # (3) Keempat callsite syscall tetap di-hook.
-          for s in sys_getpriority sys_setpriority sys_ioprio_set sys_ioprio_get; do
-            grep -qF "syscall_lookup(\"$s\")" "$M/routine_raw.c" || {
-              echo "ERROR: callsite $s tidak lagi di-hook - audit ulang"
-              exit 1
-            }
-          done
-          # (4) Jaring kprobe pada find_user tetap ada (kalau raw-patch gagal).
-          grep -qF 'init_kprobe("find_user"' "$M/routine_kp.c" || {
-            echo "ERROR: jaring kprobe find_user hilang - tidak ada fallback kalau raw-patch gagal"
-            exit 1
-          }
-          echo "OK: penjaga 4.14 built-in lolos (nama syscall telanjang, fallback <5.8, 4 callsite, kprobe)"
-
-          echo "FGP_SHA=$(git -C fgp-src rev-parse --short=9 HEAD)" >> "$GITHUB_ENV"
-          rm -rf fgp-src
-          echo "Integrasi fgetpriority: SUKSES (built-in)"
-
       - name: Pastikan tidak ada residu Re:Kernel & Baseband-guard
         working-directory: kernel
         run: |
@@ -3249,32 +3821,15 @@ jobs:
           echo "== Ringkasan timeout_work blk-core =="
           grep -n 'INIT_WORK(&q->timeout_work' block/blk-core.c || true
 
-      - name: Aktifkan xxKSU di defconfig (hook tabel syscall, tanpa SUSFS)
+      - name: Aktifkan xxKSU, SUSFS & NoMount di defconfig
         working-directory: kernel
         run: |
           DEF=arch/arm64/configs/rosemary_defconfig
 
-          # ----- AUDIT STRUKTUR (revisi ke-118, 2026-11-16) -----
-          # Dibaca dari KernelSU/kernel/Kconfig pin xxKSU c16b935d0:
-          #
-          # 1. KSU tristate, default y, depends on SECURITY_SELINUX, select
-          #    SECCOMP. Ditulis eksplisit =y supaya tidak pernah jadi modul.
-          # 2. KSU_TAMPER_SYSCALL_TABLE bool, default n, depends on ARM/ARM64.
-          #    Inilah cara hook build ini (panduan xxKSU untuk 3.0 - 4.14).
-          #    KSU_HACK_ARM64_BRANCH_LINK "depends on !KSU_TAMPER_SYSCALL_TABLE"
-          #    dan default n untuk KSU=y, jadi keduanya tidak bisa menyala
-          #    bersamaan; step Compile tetap meng-assert-nya.
-          # 3. KSU_LSM_SECURITY_HOOKS default y - setuid, rename (pelacak
-          #    paket), bprm, file_permission lewat LSM. Tidak ditulis di sini;
-          #    di-assert di step Compile.
-          # 4. Semua opsi lain dibiarkan default upstream (KSU_HOSTSREDIRECT n,
-          #    KSU_DISABLE_32BIT_HOOKS n - rosemary menjalankan app 32-bit,
-          #    jadi compat_sys_call_table HARUS ikut di-hook).
-          #
-          # DEBUG_KERNEL, KALLSYMS, KALLSYMS_ALL dulu datang dari fragmen
-          # dlagia ksu-susfs_defconfig (SCRIPTS_PIN, dicabut revisi ini).
-          # Ketiganya ditulis langsung supaya .config di luar KSU sama dengan
-          # titik AD.
+          # ----- AUDIT STRUKTUR (revisi ke-118 + rosemary-5) -----
+          # xxKSU (backslashxx/KernelSU) memakai hook tabel syscall + LSM.
+          # SUSFS v2.4.0 (fs/Kconfig.susfs) hidup di parent kernel tanpa
+          # mengubah mode hook xxKSU dan tanpa BakaSU.
           if grep -nE '^(# )?CONFIG_KSU' "$DEF"; then
             echo "ERROR: $DEF sudah berisi baris CONFIG_KSU sebelum step ini."
             exit 1
@@ -3286,8 +3841,19 @@ jobs:
             echo "CONFIG_KALLSYMS_ALL=y"
             echo "CONFIG_KSU=y"
             echo "CONFIG_KSU_TAMPER_SYSCALL_TABLE=y"
+            echo "CONFIG_KSU_SUSFS=y"
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
+            echo "CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y"
           } >> "$DEF"
-          echo "[defconfig] xxKSU: CONFIG_KSU=y + CONFIG_KSU_TAMPER_SYSCALL_TABLE=y (plus DEBUG_KERNEL/KALLSYMS/KALLSYMS_ALL)"
+          echo "[defconfig] xxKSU + SUSFS v2.4.0 (11 opsi) ditambahkan"
 
           {
             echo ""
@@ -3302,17 +3868,6 @@ jobs:
             echo "CONFIG_NOMOUNT=y"
           } >> "$DEF"
           echo "[defconfig] CONFIG_NOMOUNT=y ditambahkan"
-
-          # fgetpriority selalu ikut (revisi ke-120), built-in.
-          if grep -qE '^(# )?CONFIG_FGETPRIORITY\b' "$DEF"; then
-            echo "ERROR: $DEF sudah berisi CONFIG_FGETPRIORITY sebelum step ini."
-            exit 1
-          fi
-          {
-            echo ""
-            echo "CONFIG_FGETPRIORITY=y"
-          } >> "$DEF"
-          echo "[defconfig] CONFIG_FGETPRIORITY=y ditambahkan"
 
           # ----- BBR + fq (revisi ke-12, 2026-09-11) -----
           # Tidak ada patch source sama sekali di sini: tcp_bbr.c dan sch_fq.c
@@ -3527,11 +4082,28 @@ jobs:
               exit 1
             fi
           done
-          if grep -nE '^CONFIG_KSU_(SUSFS|MANUAL_HOOK|TRACEPOINT_HOOK)' out/.config; then
-            echo "ERROR: simbol BakaSU/SUSFS di atas masih ada di .config - integrasi lama belum bersih."
+          if grep -nE '^CONFIG_KSU_(MANUAL_HOOK|TRACEPOINT_HOOK)' out/.config; then
+            echo "ERROR: simbol hook BakaSU di atas masih ada di .config."
             exit 1
           fi
-          echo "OK: xxKSU =y, hook tabel syscall + LSM, tanpa SUSFS."
+          for opt in \
+            CONFIG_KSU_SUSFS \
+            CONFIG_KSU_SUSFS_SUS_PATH \
+            CONFIG_KSU_SUSFS_SUS_MOUNT \
+            CONFIG_KSU_SUSFS_SUS_KSTAT \
+            CONFIG_KSU_SUSFS_SPOOF_UNAME \
+            CONFIG_KSU_SUSFS_ENABLE_LOG \
+            CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            CONFIG_KSU_SUSFS_OPEN_REDIRECT \
+            CONFIG_KSU_SUSFS_SUS_MAP \
+            CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER; do
+            grep -q "^${opt}=y\$" out/.config || {
+              echo "ERROR: ${opt} tidak resolve ke y di out/.config"
+              exit 1
+            }
+          done
+          echo "OK: xxKSU =y (tabel syscall + LSM) + SUSFS v2.4.0 (11 opsi =y)."
 
           # Revisi ke-118: string versi diperiksa SEBELUM sembilan menit
           # kompilasi. scripts/setlocalversion pohon ini menyusun release dari
@@ -3576,11 +4148,10 @@ jobs:
           grep -E '^CONFIG_NOMOUNT' out/.config || true
           grep -q '^CONFIG_NOMOUNT=y$' out/.config || { echo "ERROR: CONFIG_NOMOUNT tidak resolve ke y"; exit 1; }
 
-          echo ""
-          echo "==================== RESOLVED fgetpriority CONFIG ===================="
-          grep -E '^CONFIG_FGETPRIORITY' out/.config || true
-          grep -q '^CONFIG_FGETPRIORITY=y$' out/.config || { echo "ERROR: CONFIG_FGETPRIORITY tidak resolve ke y"; exit 1; }
-          echo "OK: CONFIG_FGETPRIORITY=y (objek + simbol dicek sesudah kompilasi)"
+          if grep -qE '^CONFIG_FGETPRIORITY=' out/.config; then
+            echo "ERROR: CONFIG_FGETPRIORITY masih aktif padahal sudah dicabut di rosemary-5"
+            exit 1
+          fi
 
           echo ""
           echo "==================== RESOLVED BBR + fq CONFIG ===================="
@@ -3722,18 +4293,24 @@ jobs:
           done
           echo "OK: banner 4.14.186-perf + handler tabel syscall xxKSU ada di hasil build."
 
-          # fgetpriority: objek + simbol di vmlinux membuktikan ikut dikompilasi
-          # DAN ter-link built-in (bukan cuma CONFIG_FGETPRIORITY=y di .config).
-          test -f out/drivers/fgetpriority/main.o || {
-            echo "ERROR: out/drivers/fgetpriority/main.o tidak terbentuk - fgetpriority tidak ikut dikompilasi"
-            exit 1
-          }
-          grep -qE '^[0-9a-f]+ [Tt] gphook_find_user$' out/System.map || {
-            echo "ERROR: simbol gphook_find_user tidak ada di System.map - fgetpriority tidak ter-link ke vmlinux"
-            grep -c 'fgetpriority\|gphook' out/System.map || true
-            exit 1
-          }
-          echo "OK: fgetpriority built-in (main.o + gphook_find_user di vmlinux)."
+          # Revisi rosemary-5: objek + simbol SUSFS & glue di vmlinux membuktikan
+          # susfs.c, susfs_ksu_glue.c, dan xxksu_susfs_lifecycle.c benar-benar
+          # terkompilasi dan tertaut bersama xxKSU.
+          for obj in out/fs/susfs.o out/fs/susfs_ksu_glue.o out/fs/xxksu_susfs_lifecycle.o; do
+            test -f "$obj" || {
+              echo "ERROR: $obj tidak terbentuk - SUSFS/glue tidak ikut dikompilasi"
+              exit 1
+            }
+          done
+          for sym in susfs_init susfs_ksu_handle_cmd susfs_is_current_ksu_domain \
+                     susfs_set_priority_uid_filter xxksu_parent_finish_umount \
+                     xxksu_parent_post_fs_data xxksu_parent_packages_changed; do
+            grep -qE "^[0-9a-f]+ [Tt] ${sym}\$" out/System.map || {
+              echo "ERROR: simbol $sym tidak ada di System.map - glue SUSFS tidak tertaut ke vmlinux"
+              exit 1
+            }
+          done
+          echo "OK: SUSFS + glue parent-kernel tertaut di vmlinux."
           command -v ccache >/dev/null 2>&1 && ccache -s | head -8 || true
 
       - name: Compile nm (NoMount userspace CLI, commit sama dgn kernel)
@@ -3870,7 +4447,7 @@ jobs:
           ### AnyKernel setup
           # begin properties
           properties() { '
-          kernel.string=Kernel rosemary 4.14.186-perf: xxKSU + NoMount + BBR (dlagia/rosemary)
+          kernel.string=Kernel rosemary 4.14.186-perf: xxKSU + SUSFS + NoMount + BBR (dlagia/rosemary)
           do.devicecheck=1
           do.modules=0
           do.systemless=1
@@ -3920,7 +4497,7 @@ jobs:
 
           cp "${{ steps.kimg.outputs.path }}" "AnyKernel3/${{ steps.kimg.outputs.name }}"
 
-          ZIP="rosemary-xxksu-nomount-$(date +%Y%m%d-%H%M%S).zip"
+          ZIP="rosemary-xxksu-susfs-nomount-$(date +%Y%m%d-%H%M%S).zip"
 
           ( cd AnyKernel3 && zip -r9 "../$ZIP" . -x '.git*' )
           echo "ZIP=$ZIP" >> "$GITHUB_ENV"
@@ -3936,18 +4513,18 @@ jobs:
             echo "| Add-on | Status |"
             echo "|---|---|"
             echo "| NoMount        | aktif (selalu ikut) |"
-            echo "| fgetpriority   | aktif (built-in, hook getpriority/ioprio) |"
+            echo "| SUSFS          | aktif (${SUSFS_VER:-v2.4.0} via glue parent-kernel di atas xxKSU, termasuk priority UID filter) |"
             echo "| BBR + fq       | aktif (congestion control default \`bbr\`, qdisc default \`fq\`) |"
+            echo "| fgetpriority   | dicabut (revisi rosemary-5: diganti SUSFS priority UID filter) |"
             echo "| Re:Kernel      | dicabut permanen (revisi ke-11) |"
             echo "| Baseband-guard | dicabut permanen (revisi ke-11) |"
-            echo "| SUSFS          | dicabut (revisi ke-118: xxKSU tidak mendukung SUSFS) |"
             echo ""
             echo "| Komponen | Commit |"
             echo "|---|---|"
             echo "| Kernel (rosemary-13) | \`${KERNEL_SHA:-?}\` |"
             echo "| xxKSU (di-PIN, KSU_VERSION ${KSU_VER:-?}) | \`${KSU_SHA:-?}\` |"
+            echo "| SUSFS (di-PIN, ${SUSFS_VER:-?}) | \`${SUSFS_SHA:-?}\` |"
             echo "| NoMount (di-PIN) | \`${NOMOUNT_SHA:-?}\` |"
-            echo "| fgetpriority (di-PIN) | \`${FGP_SHA:-?}\` |"
             echo ""
             # Alasan yang sama dengan blok kembarannya di step "Terbitkan
             # Release", dengan satu tambahan: step ini `if: always()`, jadi
@@ -4041,8 +4618,8 @@ jobs:
             printf -- '| bagian | commit |\n|---|---|\n'
             printf -- '| kernel | `%s` |\n' "$KERNEL_SHA"
             printf -- '| xxKSU (KSU_VERSION %s) | `%s` |\n' "$KSU_VER" "$KSU_SHA"
+            printf -- '| SUSFS (%s) | `%s` |\n' "$SUSFS_VER" "$SUSFS_SHA"
             printf -- '| NoMount | `%s` |\n' "$NOMOUNT_SHA"
-            printf -- '| fgetpriority | `%s` |\n' "$FGP_SHA"
             # Revisi ke-46: KEDELAPAN pin, bukan tiga. Sejak revisi ke-45c
             # pertanyaan "dua rilis ini isinya sama atau tidak?" dijawab persis
             # dua hal - nilai kedelapan SHA DAN revisi workflow yang
@@ -4076,9 +4653,12 @@ jobs:
               "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
             printf -- '- `%s` sudah berformat AnyKernel3: flash langsung lewat\n' "$ZIP"
             printf -- '  recovery/KernelSU, tidak perlu dibongkar dulu.\n'
-            printf -- '- Kernel ini memakai **xxKSU** (backslashxx/KernelSU), uname\n'
-            printf -- '  `4.14.186-perf`, **tanpa SUSFS**. Manager: APK dari halaman rilis\n'
+            printf -- '- Kernel ini memakai **xxKSU** (backslashxx/KernelSU) + **SUSFS %s**\n' "$SUSFS_VER"
+            printf -- '  (via glue parent-kernel, tanpa BakaSU) + **NoMount**, uname\n'
+            printf -- '  `4.14.186-perf`. Manager: APK dari halaman rilis\n'
             printf -- '  backslashxx/KernelSU (versi %s); manager BakaSU tidak dikenali.\n' "$KSU_VER"
+            printf -- '- Pastikan fitur `kernel_umount` aktif di xxKSU Manager agar\n'
+            printf -- '  `TIF_PROC_UMOUNTED` terpasang dan fitur SUSFS bekerja pada aplikasi.\n'
           } > /tmp/notes.md
 
           # --target: tanpa repo git lokal, gh akan menempelkan tag ke HEAD
@@ -4365,7 +4945,7 @@ jobs:
           NOMOUNT_PIN;maxsteeel/nomount;nomount
           NOMOUNT_LOADER_PIN;maxsteeel/nomount;nomount-loader
           AK3_PIN;vlxlxlv/AnyKernel3;ak3
-          FGETPRIORITY_PIN;aerath-stuff/fgetpriority;fgetpriority
+          SUSFS_PIN;JackA1ltman/NonGKI_Kernel_Build_2nd;susfs
           DAFTAR
           if [ "$gagal" = 1 ]; then
             printf '\nAda pin yang gagal diarsip - lihat peringatan kuning di atas.\n' >> "$GITHUB_STEP_SUMMARY"

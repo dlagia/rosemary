@@ -1,9 +1,10 @@
 # Panduan dlagia/rosemary
 
 Kernel Xiaomi rosemary (Redmi Note 10S, MT6785, Linux 4.14) dengan
-xxKSU (backslashxx/KernelSU) + NoMount + fgetpriority, dibangun otomatis
-oleh GitHub Actions. `uname -r` = `4.14.186-perf`, sama dengan kernel stok
-(step "Samakan SUBLEVEL dengan versi stok").
+xxKSU (backslashxx/KernelSU) + SUSFS (v2.4.0 via glue parent-kernel) +
+NoMount, dibangun otomatis oleh GitHub Actions. `uname -r` =
+`4.14.186-perf`, sama dengan kernel stok (step "Samakan SUBLEVEL dengan
+versi stok").
 Panduan ini ditulis supaya semua pekerjaan rutin bisa dikerjakan sendiri,
 tanpa bantuan AI.
 
@@ -28,14 +29,16 @@ Komponen yang di-pin:
 |---|---|---|
 | `KERNEL_PIN` | dlagia/android_kernel_xiaomi_rosemary | rosemary-13 |
 | `KSU_PIN` | backslashxx/KernelSU (xxKSU) | master |
+| `SUSFS_PIN` | JackA1ltman/NonGKI_Kernel_Build_2nd (SUSFS 4.14) | mainline |
 | `NOMOUNT_PIN` | maxsteeel/nomount | dev |
 | `NOMOUNT_LOADER_PIN` | maxsteeel/nomount | master |
 | `AK3_PIN` | vlxlxlv/AnyKernel3 | mt6781 |
-| `FGETPRIORITY_PIN` | aerath-stuff/fgetpriority | master |
 | `CLANG_PIN` | kdrag0n/proton-clang | master |
 
-SUSFS tidak ada: xxKSU tidak mendukungnya. Modul yang butuh SUSFS
-kehilangan fitur kernelnya.
+SUSFS aktif lewat patch 4.14 JackA1ltman + glue parent-kernel di atas xxKSU
+(tanpa BakaSU). Agar fitur SUSFS (`SUS_MOUNT`, `SUS_MAP`, `OPEN_REDIRECT`,
+`SUS_KSTAT`) aktif pada aplikasi, pastikan fitur `kernel_umount` di xxKSU
+Manager dalam keadaan aktif (dengan minimal satu modul terpasang).
 
 ## Manager
 
@@ -142,7 +145,7 @@ klik step yang bertanda X:
 - **Clone / fetch gagal, `not our ref`, `couldn't find remote ref`**: commit
   hilang di upstream (lihat "Upstream hilang"), atau GitHub sedang gangguan
   (tekan *Re-run jobs*).
-- **Assert / `ERROR: ...` di step integrasi (xxKSU, NoMount, fgetpriority, SUBLEVEL)**: upstream
+- **Assert / `ERROR: ...` di step integrasi (xxKSU, SUSFS, NoMount, SUBLEVEL)**: upstream
   mengubah bentuk kode yang ditambal workflow ini. Paling aman:
   **Kembali ke titik**, lalu tunggu upstream stabil, atau naikkan komponen
   lain dulu.
