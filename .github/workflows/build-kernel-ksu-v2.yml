@@ -1602,8 +1602,16 @@
 #       - kernel/kallsyms.c menyembunyikan simbol xxksu_*.
 # (b) fgetpriority (step integrasi, defconfig, assert, arsip, pin-watch,
 #     naikkan-pin) dicabut permanen - diganti CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y.
-# (c) Syarat runtime: fitur kernel_umount di xxKSU Manager wajib aktif agar
-#     TIF_PROC_UMOUNTED dipasang oleh xxksu_parent_finish_umount().
+# (c) Audit runtime:
+#     - kernel_umount.c tetap memasang TIF_PROC_UMOUNTED + menjadwalkan
+#       susfs_extra_works lewat xxksu_parent_finish_umount() untuk aplikasi
+#       non-root turunan zygote meskipun kernel_umount mati atau hanya NoMount
+#       (tanpa notify-module-mounted), sambil tetap menahan try_umount bila
+#       kernel_umount mati / belum ada modul mount;
+#     - fs/stat.c menambah else sebelum STATX_SUS_KSTAT_FUSE dan membersihkan
+#       bit internal STATX_SUS_KSTAT* dari stat->result_mask sebelum keluar dari
+#       vfs_getattr_nosec() agar tidak bocor ke statx()->stx_mask userspace;
+#     - security/selinux/avc.c menjaga susfs_ksu_sid != 0 dan kfree(scontext).
 # (d) Mundur: commit bf2adcd (rilis build-20261122-034128, xxKSU + NoMount +
 #     fgetpriority tanpa SUSFS) atau titik AO.
 # ============================================================
@@ -2113,7 +2121,34 @@ jobs:
           diff --git a/kernel/feature/kernel_umount.c b/kernel/feature/kernel_umount.c
           --- a/kernel/feature/kernel_umount.c
           +++ b/kernel/feature/kernel_umount.c
-          @@ -125,4 +125,7 @@
+          @@ -75,11 +75,15 @@
+           	uid_t new_uid = ksu_get_uid_t(new->uid);
+           	uid_t old_uid = ksu_get_uid_t(old->uid);
+           
+          +#ifdef CONFIG_KSU_SUSFS
+          +	bool do_kernel_umount = ksu_kernel_umount_enabled && ksu_module_mounted;
+          +#else
+           	if (!ksu_kernel_umount_enabled)
+           		return 0;
+           
+           	// if there isn't any module mounted, just ignore it!
+           	if (!ksu_module_mounted)
+           		return 0;
+          +#endif
+           
+           	// There are 6 scenarios:
+          @@ -104,4 +108,10 @@
+           		pr_info("handle umount ignore non zygote child: %d\n", current->pid);
+           		return 0;
+           	}
+          +#ifdef CONFIG_KSU_SUSFS
+          +	if (!do_kernel_umount) {
+          +		xxksu_parent_finish_umount();
+          +		return 0;
+          +	}
+          +#endif
+           	// umount the target mnt
+          @@ -122,4 +132,7 @@
            	revert_creds(saved);
           +#ifdef CONFIG_KSU_SUSFS
           +	xxksu_parent_finish_umount();
@@ -2342,6 +2377,103 @@ jobs:
                   s = s.replace(anc, "#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\n#include <linux/susfs_def.h>\nextern bool susfs_is_inode_sus_kstat(", 1)
                   print("stat.c: #include <linux/susfs_def.h> ditambahkan")
                   changed = True
+              # Perbaiki missing else sebelum STATX_SUS_KSTAT_FUSE (agar non-FUSE
+              # tidak menyalakan dua bit sekaligus) dan bersihkan bit internal
+              # STATX_SUS_KSTAT* dari stat->result_mask sebelum keluar dari
+              # vfs_getattr_nosec() agar tidak bocor ke statx()->stx_mask userspace.
+              fuse_bad = (
+                  "\t\t\tif (!is_fuse) {\n"
+                  "\t\t\t\t// stat->mnt_id = real_mount(path->mnt)->mnt_id;\n"
+                  "\t\t\t\t// only for 5.10 kernel\n"
+                  "\t\t\t\tstat->result_mask |= STATX_SUS_KSTAT;\n"
+                  "\t\t\t}\n"
+                  "\t\t\t// stat->mnt_id = real_mount(path->mnt)->mnt_id;\n"
+                  "\t\t\t// only for 5.10 kernel\n"
+                  "\t\t\tstat->result_mask |= STATX_SUS_KSTAT_FUSE;\n"
+              )
+              fuse_ok = (
+                  "\t\t\tif (!is_fuse) {\n"
+                  "\t\t\t\t// stat->mnt_id = real_mount(path->mnt)->mnt_id;\n"
+                  "\t\t\t\t// only for 5.10 kernel\n"
+                  "\t\t\t\tstat->result_mask |= STATX_SUS_KSTAT;\n"
+                  "\t\t\t} else {\n"
+                  "\t\t\t\t// stat->mnt_id = real_mount(path->mnt)->mnt_id;\n"
+                  "\t\t\t\t// only for 5.10 kernel\n"
+                  "\t\t\t\tstat->result_mask |= STATX_SUS_KSTAT_FUSE;\n"
+                  "\t\t\t}\n"
+              )
+              if fuse_ok not in s:
+                  need(s, fuse_bad, 'fs/stat.c', 'missing else STATX_SUS_KSTAT_FUSE')
+                  s = s.replace(fuse_bad, fuse_ok, 1)
+                  print("stat.c: tambah else sebelum STATX_SUS_KSTAT_FUSE")
+                  changed = True
+              mask_bad = (
+                  "\tif (inode->i_op->getattr)\n"
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\n"
+                  "\t{\n"
+                  "\t\tint err = inode->i_op->getattr(path, stat, request_mask,\n"
+                  "\t\t\t\t\t    query_flags);\n"
+                  "\t\tif (!err) {\n"
+                  "\t\t\tif (stat->result_mask & STATX_SUS_KSTAT) {\n"
+                  "\t\t\t\tsusfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);\n"
+                  "\t\t\t\treturn err;\n"
+                  "\t\t\t}\n"
+                  "\t\t\tif (stat->result_mask & STATX_SUS_KSTAT_FUSE) {\n"
+                  "\t\t\t\tsusfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT_FUSE);\n"
+                  "\t\t\treturn err;\n"
+                  "\t\t\t}\n"
+                  "\t\t}\n"
+                  "\t\treturn err;\n"
+                  "\t}\n"
+                  "\tif (stat->result_mask & STATX_SUS_KSTAT) {\n"
+                  "\t\tgeneric_fillattr(inode, stat);\n"
+                  "\t\tsusfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);\n"
+                  "\t\treturn 0;\n"
+                  "\t}\n"
+                  "\tif (stat->result_mask & STATX_SUS_KSTAT_FUSE) {\n"
+                  "\t\tgeneric_fillattr(inode, stat);\n"
+                  "\t\tsusfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT_FUSE);\n"
+                  "\t\treturn 0;\n"
+                  "\t}\n"
+              )
+              mask_ok = (
+                  "\tif (inode->i_op->getattr)\n"
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\n"
+                  "\t{\n"
+                  "\t\tint err = inode->i_op->getattr(path, stat, request_mask,\n"
+                  "\t\t\t\t\t    query_flags);\n"
+                  "\t\tu32 susfs_mask = stat->result_mask & (STATX_SUS_KSTAT | STATX_SUS_KSTAT_FUSE);\n"
+                  "\t\tstat->result_mask &= ~(STATX_SUS_KSTAT | STATX_SUS_KSTAT_FUSE);\n"
+                  "\t\tif (!err) {\n"
+                  "\t\t\tif (susfs_mask & STATX_SUS_KSTAT) {\n"
+                  "\t\t\t\tsusfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);\n"
+                  "\t\t\t\treturn err;\n"
+                  "\t\t\t}\n"
+                  "\t\t\tif (susfs_mask & STATX_SUS_KSTAT_FUSE) {\n"
+                  "\t\t\t\tsusfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT_FUSE);\n"
+                  "\t\t\t\treturn err;\n"
+                  "\t\t\t}\n"
+                  "\t\t}\n"
+                  "\t\treturn err;\n"
+                  "\t}\n"
+                  "\tif (stat->result_mask & STATX_SUS_KSTAT) {\n"
+                  "\t\tstat->result_mask &= ~(STATX_SUS_KSTAT | STATX_SUS_KSTAT_FUSE);\n"
+                  "\t\tgeneric_fillattr(inode, stat);\n"
+                  "\t\tsusfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);\n"
+                  "\t\treturn 0;\n"
+                  "\t}\n"
+                  "\tif (stat->result_mask & STATX_SUS_KSTAT_FUSE) {\n"
+                  "\t\tstat->result_mask &= ~(STATX_SUS_KSTAT | STATX_SUS_KSTAT_FUSE);\n"
+                  "\t\tgeneric_fillattr(inode, stat);\n"
+                  "\t\tsusfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT_FUSE);\n"
+                  "\t\treturn 0;\n"
+                  "\t}\n"
+              )
+              if mask_ok not in s:
+                  need(s, mask_bad, 'fs/stat.c', 'vfs_getattr_nosec STATX_SUS_KSTAT mask leak')
+                  s = s.replace(mask_bad, mask_ok, 1)
+                  print("stat.c: bersihkan bit internal STATX_SUS_KSTAT* dari stat->result_mask")
+                  changed = True
               return s if changed else None
 
           STATFS_ANCHOR = "static int susfs_statfs_by_dentry("
@@ -2388,6 +2520,14 @@ jobs:
               return s if changed else None
 
           def fix_avc_leak(s):
+              changed = False
+              sid_old = "\t\tif (unlikely(tsid == susfs_ksu_sid)) {\n"
+              sid_new = "\t\tif (unlikely(susfs_ksu_sid && tsid == susfs_ksu_sid)) {\n"
+              if sid_new not in s and sid_old in s:
+                  need(s, sid_old, 'security/selinux/avc.c', 'avc susfs_ksu_sid guard')
+                  s = s.replace(sid_old, sid_new, 1)
+                  print("avc.c: jaga susfs_ksu_sid != 0 sebelum banding tsid")
+                  changed = True
               old = (
                   "\t\t\telse\n"
                   '\t\t\t\taudit_log_format(ab, " tcontext=%s", "u:r:priv_app:s0:c512,c768");\n'
@@ -2400,11 +2540,12 @@ jobs:
                   "\t\t\t}\n"
                   "\t\t\tgoto bypass_orig_flow;\n"
               )
-              if new in s or old not in s:
-                  return None
-              need(s, old, 'security/selinux/avc.c', 'avc spoof bypass_orig_flow')
-              print("avc.c: tambah kfree(scontext) sebelum bypass_orig_flow")
-              return s.replace(old, new, 1)
+              if new not in s and old in s:
+                  need(s, old, 'security/selinux/avc.c', 'avc spoof bypass_orig_flow')
+                  print("avc.c: tambah kfree(scontext) sebelum bypass_orig_flow")
+                  s = s.replace(old, new, 1)
+                  changed = True
+              return s if changed else None
 
           FD_OLD = "\t\tgoto orig_flow;\n\t}\norig_flow:\n#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
           FD_NEW = "\t\tgoto orig_flow;\n\t\t}\n\t}\norig_flow:\n#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
@@ -2461,6 +2602,8 @@ jobs:
           if re.search(MNT_PAT, st, re.M): err.append("fs/stat.c masih punya stat->mnt_id aktif")
           if re.search(r'^\+', st, re.M): err.append("fs/stat.c masih punya baris '+'")
           if '#include <linux/susfs_def.h>' not in st: err.append("fs/stat.c tanpa <linux/susfs_def.h>")
+          if 'stat->result_mask &= ~(STATX_SUS_KSTAT | STATX_SUS_KSTAT_FUSE);' not in st: err.append("fs/stat.c belum bersihkan STATX_SUS_KSTAT*")
+          if st.count('{') != st.count('}'): err.append("fs/stat.c brace tidak seimbang")
           sf = rd('fs/statfs.c')
           i_decl, i_use = sf.find('extern int susfs_sus_kstat_spoof_vfs_statfs'), sf.find(STATFS_ANCHOR)
           if i_use < 0 or not (0 <= i_decl < i_use): err.append("fs/statfs.c extern salah posisi")
@@ -2478,6 +2621,7 @@ jobs:
           if 'ida_simple_get(&mnt_id_ida' in ns: err.append("fs/namespace.c ida race")
           if ns.count('spin_lock(&mnt_id_lock);') != ns.count('spin_unlock(&mnt_id_lock);'): err.append("fs/namespace.c lock tak seimbang")
           avc = rd('security/selinux/avc.c')
+          if 'susfs_ksu_sid && tsid == susfs_ksu_sid' not in avc: err.append("security/selinux/avc.c tanpa guard susfs_ksu_sid != 0")
           for _p, _t in (('fs/super.c', sp), ('fs/namespace.c', ns), ('security/selinux/avc.c', avc)):
               if _t.count('{') != _t.count('}'): err.append(f"{_p} brace tidak seimbang")
           if err:
@@ -4716,8 +4860,9 @@ jobs:
             printf -- '  (via glue parent-kernel, tanpa BakaSU) + **NoMount**, uname\n'
             printf -- '  `4.14.186-perf`. Manager: APK dari halaman rilis\n'
             printf -- '  backslashxx/KernelSU (versi %s); manager BakaSU tidak dikenali.\n' "$KSU_VER"
-            printf -- '- Pastikan fitur `kernel_umount` aktif di xxKSU Manager agar\n'
-            printf -- '  `TIF_PROC_UMOUNTED` terpasang dan fitur SUSFS bekerja pada aplikasi.\n'
+            printf -- '- `TIF_PROC_UMOUNTED` dipasang otomatis untuk aplikasi non-root\n'
+            printf -- '  turunan zygote (tetap bekerja walau `kernel_umount` mati atau hanya\n'
+            printf -- '  memakai NoMount tanpa metamodule overlayfs).\n'
           } > /tmp/notes.md
 
           # --target: tanpa repo git lokal, gh akan menempelkan tag ke HEAD

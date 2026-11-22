@@ -36,9 +36,10 @@ Komponen yang di-pin:
 | `CLANG_PIN` | kdrag0n/proton-clang | master |
 
 SUSFS aktif lewat patch 4.14 JackA1ltman + glue parent-kernel di atas xxKSU
-(tanpa BakaSU). Agar fitur SUSFS (`SUS_MOUNT`, `SUS_MAP`, `OPEN_REDIRECT`,
-`SUS_KSTAT`) aktif pada aplikasi, pastikan fitur `kernel_umount` di xxKSU
-Manager dalam keadaan aktif (dengan minimal satu modul terpasang).
+(tanpa BakaSU). Penandaan `TIF_PROC_UMOUNTED` untuk fitur SUSFS (`SUS_MOUNT`,
+`SUS_MAP`, `OPEN_REDIRECT`, `SUS_KSTAT`, `SUS_PATH_LOOP`) berjalan otomatis pada
+aplikasi non-root turunan zygote, termasuk saat `kernel_umount` dimatikan atau
+hanya memakai NoMount tanpa metamodule overlayfs.
 
 ## Manager
 
