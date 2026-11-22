@@ -1,7 +1,8 @@
 # Panduan dlagia/rosemary
 
 Kernel Xiaomi rosemary (Redmi Note 10S, MT6785, Linux 4.14) dengan
-xxKSU (backslashxx/KernelSU) + NoMount + fgetpriority, dibangun otomatis
+xxKSU (backslashxx/KernelSU) + SUSFS v2.4.0 ala Najip + NoMount +
+fgetpriority (cabang uji `susfs-najip`), dibangun otomatis
 oleh GitHub Actions. `uname -r` = `4.14.186-perf`, sama dengan kernel stok
 (step "Samakan SUBLEVEL dengan versi stok").
 Panduan ini ditulis supaya semua pekerjaan rutin bisa dikerjakan sendiri,
@@ -28,14 +29,25 @@ Komponen yang di-pin:
 |---|---|---|
 | `KERNEL_PIN` | dlagia/android_kernel_xiaomi_rosemary | rosemary-13 |
 | `KSU_PIN` | backslashxx/KernelSU (xxKSU) | master |
+| `SUSFS_PIN` | JackA1ltman/NonGKI_Kernel_Build_2nd (SUSFS 4.14) | mainline |
+| `NAJIP_PIN` | Najip/KernelSU_SUSFS_Samsung_SM-A325X (lifecycle 0002) | main |
 | `NOMOUNT_PIN` | maxsteeel/nomount | dev |
 | `NOMOUNT_LOADER_PIN` | maxsteeel/nomount | master |
 | `AK3_PIN` | vlxlxlv/AnyKernel3 | mt6781 |
 | `FGETPRIORITY_PIN` | aerath-stuff/fgetpriority | master |
 | `CLANG_PIN` | kdrag0n/proton-clang | master |
 
-SUSFS tidak ada: xxKSU tidak mendukungnya. Modul yang butuh SUSFS
-kehilangan fitur kernelnya.
+SUSFS aktif lewat patch 4.14 JackA1ltman + glue parent-kernel di atas xxKSU,
+disusun seperti Najip (tanpa BakaSU, tanpa hook manual). Hook lifecycle di
+KernelSU diambil dari patch `0002-susfs-lifecycle-calls.patch` milik Najip.
+Penandaan `TIF_PROC_UMOUNTED` (dipakai `SUS_MOUNT`, `SUS_MAP`,
+`OPEN_REDIRECT`, `SUS_KSTAT`, `SUS_PATH_LOOP`) tetap jalan pada aplikasi
+non-root turunan zygote walau `kernel_umount` mati atau hanya memakai
+NoMount. `CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER` sengaja mati karena
+fgetpriority sudah menyaring getpriority/ioprio; `ENABLE_LOG` juga mati.
+
+Rilis dari cabang ini selalu *prerelease* dan tidak pernah jadi "Latest",
+jadi gerbang build `main` dan tombol "Tandai terbukti boot" tidak terganggu.
 
 ## Manager
 
@@ -142,7 +154,7 @@ klik step yang bertanda X:
 - **Clone / fetch gagal, `not our ref`, `couldn't find remote ref`**: commit
   hilang di upstream (lihat "Upstream hilang"), atau GitHub sedang gangguan
   (tekan *Re-run jobs*).
-- **Assert / `ERROR: ...` di step integrasi (xxKSU, NoMount, fgetpriority, SUBLEVEL)**: upstream
+- **Assert / `ERROR: ...` di step integrasi (xxKSU, SUSFS, NoMount, fgetpriority, SUBLEVEL)**: upstream
   mengubah bentuk kode yang ditambal workflow ini. Paling aman:
   **Kembali ke titik**, lalu tunggu upstream stabil, atau naikkan komponen
   lain dulu.

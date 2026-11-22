@@ -11,7 +11,7 @@
 # pernah mendorong commit. Ia cuma membaca pins.env di akar repo (sejak revisi
 # ke-26; kalimat ini sendiri masih menyebut build-kernel-ksu-v2.yml sampai
 # revisi ke-34 - prosa pun bisa jadi salinan kedua yang basi), membandingkan
-# keenam pin (delapan sampai revisi ke-117) dengan upstream, lalu menulis satu
+# kesembilan pin (delapan sampai revisi ke-117) dengan upstream, lalu menulis satu
 # issue berisi tabel + vonis per komponen. Naik-turun pin tetap keputusan
 # pemilik.
 #
@@ -180,10 +180,11 @@ jobs:
           #                      memori" menambal mm/, kernel/sysctl.c dan
           #                      drivers/block/zram/. Lagi pula setiap commit
           #                      di repo ini mengubah kernel yang dikompilasi.
-          #   - BakaSU         : kernel/ saja. Perubahan di manager/ atau
-          #                      userspace/ nol dampak ke kernel yang dibangun.
-          #   - SUSFS          : patch 4.14 dan script hook - ini yang berulang
-          #                      kali mematahkan anchor fixer.
+          #   - xxKSU          : kernel/ (driver, Kconfig, Makefile, setup.sh).
+          #   - SUSFS          : Patches/Patch/susfs_patch_to_4.14.patch (patch
+          #                      kernel 4.14 yang diterapkan sebelum glue xxKSU).
+          #   - Najip          : patches/kernelsu/0002-susfs-lifecycle-calls.patch
+          #                      saja (dikunci sha256 di workflow build).
           #   - NoMount dev    : kernel/src/ (driver yang dikompilasi) dan
           #                      userspace/src/ (step "Compile nm" menyalin
           #                      nm.c + nm.h dari pin yang sama; file baru di
@@ -194,12 +195,11 @@ jobs:
           #                      ramdisk/ (dump_boot menimpakan isinya ke ramdisk
           #                      boot). Dua yang terakhir sejak 2026-10-02.
           #   - proton-clang   : apa pun = ganti compiler.
-          #   - xxKSU (revisi ke-118, menggantikan BakaSU; SUSFS dan
-          #     Build-Kernel_scripts dicabut): kernel/ = driver, Kconfig,
-          #     Makefile dan setup.sh yang dijalankan workflow build.
           KOMPONEN='
           ^KERNEL_PIN=[0-9a-f]{40};dlagia/android_kernel_xiaomi_rosemary;rosemary-13;.;source kernel
           ^KSU_PIN=[0-9a-f]{40};backslashxx/KernelSU;master;^kernel/;xxKSU
+          ^SUSFS_PIN=[0-9a-f]{40};JackA1ltman/NonGKI_Kernel_Build_2nd;mainline;^Patches/Patch/susfs_patch_to_4\.14\.patch$;SUSFS
+          ^NAJIP_PIN=[0-9a-f]{40};Najip/KernelSU_SUSFS_Samsung_SM-A325X;main;^patches/kernelsu/0002-susfs-lifecycle-calls\.patch$;Najip lifecycle
           ^NOMOUNT_PIN=[0-9a-f]{40};maxsteeel/nomount;dev;^(kernel/src/|userspace/src/);NoMount driver
           ^NOMOUNT_LOADER_PIN=[0-9a-f]{40};maxsteeel/nomount;master;^kernel/setup\.sh;NoMount loader
           ^CLANG_PIN=[0-9a-f]{40};kdrag0n/proton-clang;master;.;proton-clang
@@ -624,11 +624,10 @@ jobs:
                 printf -- '- **JANGAN naikkan dulu.** Vonis di atas bukan AMAN, jadi laporan ini sengaja\n'
                 printf -- '  TIDAK memberi baris salin-tempelnya: menyalinnya ke `%s` akan melewati\n' "$WF"
                 printf -- '  triase tombol "Naikkan pin", yang justru akan menolak kenaikan ini.\n'
-                printf -- '- yang harus dikerjakan lebih dulu: baca diff di atas, simulasikan di luar CI\n'
-                printf -- '  (template audit revisi ke-17), lalu catat hasilnya sebagai baris `# TAHAN`\n'
-                printf -- '  di `%s` kalau ditolak. Sejak revisi ke-43 baris itu dibaca `preflight.sh`,\n' "$WF"
-                printf -- '  `pincheck`, tombol "Naikkan pin" DAN robot ini: begitu barisnya ada,\n'
-                printf -- '  laporan besok memvonisnya **DITAHAN** selama SHA itu masih terkandung di HEAD.\n'
+                printf -- '- yang harus dikerjakan lebih dulu: baca diff di atas, uji di luar CI,\n'
+                printf -- '  lalu catat hasilnya sebagai baris `# TAHAN` di `%s` kalau ditolak.\n' "$WF"
+                printf -- '  Baris `# TAHAN` dibaca oleh tombol "Naikkan pin" DAN robot ini:\n'
+                printf -- '  begitu barisnya ada, laporan besok memvonisnya **DITAHAN** selama SHA itu masih terkandung di HEAD.\n'
                 printf -- '- kalau audit itu sudah dikerjakan dan hasilnya lolos: Actions -> **Naikkan pin**\n'
                 printf -- '  -> komponen `%s` -> centang `paksa` -> Run. SHA tujuannya `%s`.\n' "$nama" "$head"
               fi
@@ -667,8 +666,8 @@ jobs:
               {
                 printf '\n### Aksi %s\n\n' "$arepo"
                 printf -- '- dirujuk lewat `@%s`, ref yang bisa digeser pemilik aksinya tanpa jejak di repo ini.\n' "$apin"
-                printf -- '- ganti jadi `uses: %s@<40 hex> # vX.Y.Z` (SHA commit rilis terbarunya),\n' "$arepo"
-                printf -- '  lalu `bash preflight.sh` (wajib bersih) dan push.\n'
+                printf -- '- ganti jadi `uses: %s@<40 hex> # vX.Y.Z` (SHA commit rilis terbarunya)\n' "$arepo"
+                printf -- '  di berkas `.github/workflows/*.yml`, lalu commit dan push.\n'
               } >> "$RINCI"
               echo 1 > /tmp/aksi_drift
               continue
@@ -694,10 +693,10 @@ jobs:
                 printf '\n### Aksi %s\n\n' "$arepo"
                 printf -- '- dipin `%s` (%s), rilis terbaru %s = `%s`\n' "$apin" "${aver:-tanpa komentar versi}" "$tag" "$tsha"
                 printf -- '- catatan rilis: https://github.com/%s/releases/tag/%s\n' "$arepo" "$tag"
-                printf -- '- cara menaikkan: TIDAK lewat "Naikkan pin". Di arsip lokal, ganti setiap\n'
-                printf -- '  `uses: %s@%s` di ketiga workflow jadi persis:\n' "$arepo" "$apin"
+                printf -- '- cara menaikkan: TIDAK lewat "Naikkan pin". Ganti setiap\n'
+                printf -- '  `uses: %s@%s` di `.github/workflows/*.yml` jadi persis:\n' "$arepo" "$apin"
                 printf -- '  ```\n  uses: %s@%s # %s\n  ```\n' "$arepo" "$tsha" "$tag"
-                printf -- '  lalu `bash preflight.sh` (wajib bersih) dan push.\n'
+                printf -- '  lalu commit dan push.\n'
               } >> "$RINCI"
             elif [ "$aver" != "$tag" ]; then
               printf '| %s | `%s` %s | `%s` %s | SHA benar, **komentar versi basi** |\n' "$arepo" "${apin:0:9}" "${aver:-kosong}" "${tsha:0:9}" "$tag" >> "$TABEL"
@@ -726,7 +725,7 @@ jobs:
               printf '\n---\n\n'
               if [ "$AKSI_DRIFT" = "1" ]; then
                 printf 'Ada aksi GitHub yang tertinggal dari rilis terbarunya atau tidak dipin SHA. '
-                printf 'Itu disunting tangan di ketiga workflow (lihat rinciannya), bukan lewat '
+                printf 'Itu disunting tangan di `.github/workflows/*.yml` (lihat rinciannya), bukan lewat '
                 printf 'tombol "Naikkan pin".\n\n'
               fi
               if [ "$ADA_DRIFT" = "0" ]; then
