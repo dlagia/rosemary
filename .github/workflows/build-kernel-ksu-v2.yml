@@ -2211,6 +2211,11 @@ jobs:
             exit 1
           fi
 
+          # Catat semua *.rej bawaan repo kernel SEBELUM patch (rosemary-13
+          # sudah membawa drivers/misc/mediatek/lcm/mt65xx_lcm_list.c.rej).
+          find . -path './.git' -prune -o -path './patch_rejects' -prune -o -name '*.rej' -printf '%P\n' \
+            | LC_ALL=C sort > /tmp/rej_before.txt
+
           # Terapkan patch; hanya fs/proc/task_mmu.c.rej yang diharapkan
           # (rosemary-13 memakai gaya 4.19+ untuk smap_gather_stats/show_smap).
           PATCH_RC=0
@@ -2218,18 +2223,21 @@ jobs:
           cat /tmp/susfs_patch.log
           rm -f "$PATCH_RAW" "$PATCH_CLEAN"
 
+          find . -path './.git' -prune -o -path './patch_rejects' -prune -o -name '*.rej' -printf '%P\n' \
+            | LC_ALL=C sort > /tmp/rej_after.txt
+
           mkdir -p patch_rejects
           UNEXPECTED=""
-          while IFS= read -r rej; do
-            [ -n "$rej" ] || continue
-            rel="${rej#./}"
+          while IFS= read -r rel; do
+            [ -n "$rel" ] || continue
             if [ "$rel" = "fs/proc/task_mmu.c.rej" ]; then
               mkdir -p "patch_rejects/$(dirname "$rel")"
-              mv "$rej" "patch_rejects/$rel"
+              mv "$rel" "patch_rejects/$rel"
             else
               UNEXPECTED="${UNEXPECTED}${rel}"$'\n'
             fi
-          done < <(find . -path './.git' -prune -o -path './patch_rejects' -prune -o -name '*.rej' -print)
+          done < <(comm -13 /tmp/rej_before.txt /tmp/rej_after.txt)
+          rm -f /tmp/rej_before.txt /tmp/rej_after.txt
 
           if [ -n "$UNEXPECTED" ]; then
             echo "ERROR: ada reject SUSFS di file yang belum ditangani:"
@@ -2357,7 +2365,35 @@ jobs:
               if rl_old in s:
                   s = s.replace(rl_old, rl_new, 1)
                   changed = True
+              # 4.14 kfree_rcu(NULL, rcu) = NULL deref panic (NULL check baru ada di 5.x).
+              # Upstream v2.4.0 sudah menjaga priority_uid_filter tapi lupa di sus_path_uid_filter.
+              kfr_bad = "\tsynchronize_rcu();\n\tkfree_rcu(old_bitmap, rcu);\n"
+              kfr_ok = "\tsynchronize_rcu();\n\tif (old_bitmap)\n\t\tkfree_rcu(old_bitmap, rcu);\n"
+              n_kfr = s.count(kfr_bad)
+              if n_kfr > 0:
+                  s = s.replace(kfr_bad, kfr_ok)
+                  print(f"susfs.c: {n_kfr} panggilan kfree_rcu(old_bitmap, rcu) dijaga if (old_bitmap)")
+                  changed = True
               return s if changed else None
+
+          def fix_avc_leak(s):
+              old = (
+                  "\t\t\telse\n"
+                  '\t\t\t\taudit_log_format(ab, " tcontext=%s", "u:r:priv_app:s0:c512,c768");\n'
+                  "\t\t\tgoto bypass_orig_flow;\n"
+              )
+              new = (
+                  "\t\t\telse {\n"
+                  '\t\t\t\taudit_log_format(ab, " tcontext=%s", "u:r:priv_app:s0:c512,c768");\n'
+                  "\t\t\t\tkfree(scontext);\n"
+                  "\t\t\t}\n"
+                  "\t\t\tgoto bypass_orig_flow;\n"
+              )
+              if new in s or old not in s:
+                  return None
+              need(s, old, 'security/selinux/avc.c', 'avc spoof bypass_orig_flow')
+              print("avc.c: tambah kfree(scontext) sebelum bypass_orig_flow")
+              return s.replace(old, new, 1)
 
           FD_OLD = "\t\tgoto orig_flow;\n\t}\norig_flow:\n#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
           FD_NEW = "\t\tgoto orig_flow;\n\t\t}\n\t}\norig_flow:\n#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
@@ -2404,6 +2440,7 @@ jobs:
           rw('fs/proc/fd.c', fix_fd)
           rw('fs/super.c', fix_super_ida)
           rw('fs/namespace.c', fix_namespace_ida)
+          rw('security/selinux/avc.c', fix_avc_leak)
 
           def rd(p):
               return open(p, encoding='utf-8', errors='surrogateescape').read()
@@ -2418,6 +2455,8 @@ jobs:
           su = rd('fs/susfs.c')
           if '#include <linux/security.h>' not in su: err.append("fs/susfs.c tanpa <linux/security.h>")
           if CALL_BAD in su: err.append("fs/susfs.c call 2-argumen")
+          if "\tsynchronize_rcu();\n\tkfree_rcu(old_bitmap, rcu);\n" in su:
+              err.append("fs/susfs.c masih ada kfree_rcu(old_bitmap, rcu) tanpa if (old_bitmap)")
           fd = rd('fs/proc/fd.c')
           if fd.count('{') != fd.count('}'): err.append("fs/proc/fd.c brace tidak seimbang")
           sp = rd('fs/super.c')
@@ -2426,11 +2465,12 @@ jobs:
           ns = rd('fs/namespace.c')
           if 'ida_simple_get(&mnt_id_ida' in ns: err.append("fs/namespace.c ida race")
           if ns.count('spin_lock(&mnt_id_lock);') != ns.count('spin_unlock(&mnt_id_lock);'): err.append("fs/namespace.c lock tak seimbang")
-          for _p, _t in (('fs/super.c', sp), ('fs/namespace.c', ns)):
+          avc = rd('security/selinux/avc.c')
+          for _p, _t in (('fs/super.c', sp), ('fs/namespace.c', ns), ('security/selinux/avc.c', avc)):
               if _t.count('{') != _t.count('}'): err.append(f"{_p} brace tidak seimbang")
           if err:
               sys.exit("susfs-fix GAGAL: " + "; ".join(err))
-          print("susfs-fix: OK, 6 file SUSFS diverifikasi")
+          print("susfs-fix: OK, 7 file SUSFS diverifikasi")
           FIX_SUSFS_414_PY
 
           # ---- Tulis glue parent-kernel xxKSU <-> SUSFS v2.4.0 ----
@@ -2439,6 +2479,7 @@ jobs:
           #ifndef _LINUX_XXKSU_PARENT_BRIDGE_H
           #define _LINUX_XXKSU_PARENT_BRIDGE_H
 
+          #include <linux/compiler.h>
           #include <linux/types.h>
 
           void xxksu_parent_reset_task(void);
@@ -2446,6 +2487,9 @@ jobs:
           void xxksu_parent_finish_umount(void);
           void xxksu_parent_post_fs_data(void);
           void xxksu_parent_packages_changed(void);
+          bool susfs_is_current_ksu_domain(void);
+          void susfs_cache_selinux_sids(void);
+          int susfs_ksu_handle_cmd(unsigned int cmd, void __user **arg);
 
           #endif /* _LINUX_XXKSU_PARENT_BRIDGE_H */
           XXKSU_BRIDGE_H
@@ -2519,12 +2563,14 @@ jobs:
            * Parent-kernel glue connecting SUSFS v2.4.0 (JackA1ltman 4.14 patch)
            * with xxKSU (backslashxx/KernelSU, syscall-table + LSM hook mode).
            */
+          #include <linux/cache.h>
           #include <linux/compiler.h>
           #include <linux/init.h>
           #include <linux/security.h>
           #include <linux/types.h>
           #include <linux/susfs.h>
           #include <linux/susfs_def.h>
+          #include <linux/xxksu_parent_bridge.h>
 
           #ifdef CONFIG_KSU_SUSFS
 
@@ -2738,9 +2784,10 @@ jobs:
                 "#include <linux/syscore_ops.h>\n#include <linux/uaccess.h>\n"
                 "#ifdef CONFIG_KSU_SUSFS\n"
                 "#include <linux/cred.h>\n"
+                "#include <linux/kernel.h>\n"
                 "#include <linux/susfs_def.h>\n"
+                "#include <linux/xxksu_parent_bridge.h>\n"
                 "#define SUSFS_KSU_INSTALL_MAGIC1 0xDEADBEEFU\n"
-                "extern int susfs_ksu_handle_cmd(unsigned int cmd, void __user **arg);\n"
                 "#endif\n",
                 "kernel/reboot.c -> include & deklarasi SUSFS")
 
