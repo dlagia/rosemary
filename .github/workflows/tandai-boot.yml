@@ -59,7 +59,7 @@ jobs:
           gh release view "$TAG" >/dev/null || {
             echo "::error::Rilis $TAG tidak ada di repo ini"; exit 1; }
 
-          SHA=$(gh api "repos/${GH_REPO}/git/ref/tags/${TAG}" --jq 'select(.object.type=="commit") | .object.sha')
+          SHA=$(gh api "repos/${GH_REPO}/commits/${TAG}" --jq .sha)
           printf '%s' "$SHA" | grep -qxE '[0-9a-f]{40}' || {
             echo "::error::commit di balik tag $TAG tidak terbaca"; exit 1; }
 

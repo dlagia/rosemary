@@ -91,7 +91,7 @@ jobs:
           # nama 2026-10-14), sama dengan kolom nama KOMPONEN di pin-watch.yml.
           case "$KOMPONEN" in
             'source kernel')         BARIS='KERNEL_PIN;dlagia/android_kernel_xiaomi_rosemary;rosemary-13;.' ;;
-            # Revisi ke-118: BakaSU -> xxKSU; SUSFS dan Build-Kernel_scripts dicabut.
+            # Revisi rosemary-5: xxKSU murni + SUSFS v2.4.0 via glue parent-kernel (tanpa BakaSU).
             'xxKSU')                 BARIS='KSU_PIN;backslashxx/KernelSU;master;^kernel/' ;;
             'SUSFS')                 BARIS='SUSFS_PIN;JackA1ltman/NonGKI_Kernel_Build_2nd;mainline;^Patches/Patch/susfs_patch_to_4\.14\.patch$' ;;
             'NoMount driver')        BARIS='NOMOUNT_PIN;maxsteeel/nomount;dev;^(kernel/src/|userspace/src/)' ;;
@@ -111,7 +111,7 @@ jobs:
           # Dihitung lewat tr, bukan `grep $'\r'`: grep Git-for-Windows membuang
           # CR sendiri, jadi uji lokal penjaga ini selalu lolos.
           if [ "$(tr -d '\r' < pins.env | wc -c)" != "$(wc -c < pins.env)" ]; then
-            echo "ERROR: pins.env berakhiran CRLF. Normalkan ke LF (mis. lewat push.sh)"
+            echo "ERROR: pins.env berakhiran CRLF. Normalkan ke LF (mis. dos2unix / git core.autocrlf=false)"
             echo "       lalu jalankan tombol ini lagi."
             exit 1
           fi

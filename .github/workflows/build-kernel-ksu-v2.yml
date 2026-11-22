@@ -1660,7 +1660,7 @@ jobs:
   #
   # Gerbang ini menjawab satu pertanyaan: adakah yang benar-benar berubah bagi
   # kernel hasil build? Yang dihitung cuma dua - berkas selain pins.env
-  # (workflow ini sendiri termasuk) dan NILAI keenam SHA. Komentar pins.env
+  # (workflow ini sendiri termasuk) dan NILAI ketujuh SHA. Komentar pins.env
   # bukan salah satunya.
   #
   # SETIAP jalur ragu berakhir lanjut=1, tidak pernah 0: token gagal, compare
@@ -1678,7 +1678,7 @@ jobs:
   # Hal yang sama terjadi kalau build X GAGAL lalu komentar menyusul. Pertanyaan
   # yang benar bukan "apa beda dari push sebelumnya" tapi "apa beda dari kernel
   # yang terakhir benar-benar terbit". Yang dihitung pun cuma dua: berkas
-  # workflow build ini dan NILAI keenam SHA. Workflow robot (pin-watch,
+  # workflow build ini dan NILAI ketujuh SHA. Workflow robot (pin-watch,
   # naikkan-pin) tidak ikut mengompilasi, jadi tidak memicu rilis kembar.
   gerbang:
     # Revisi ke-55: 22.04 -> 24.04. ubuntu-22.04 mulai dipensiunkan
@@ -1722,8 +1722,8 @@ jobs:
             for coba in 1 2; do
               TAG_LATEST=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)
               if printf '%s' "$TAG_LATEST" | grep -qxE 'build-[0-9]{8}-[0-9]{6}'; then
-                BASIS=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG_LATEST}" \
-                          --jq 'select(.object.type=="commit") | .object.sha' 2>/dev/null || true)
+                BASIS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG_LATEST}" \
+                          --jq .sha 2>/dev/null || true)
               fi
               if printf '%s' "$BASIS" | grep -qxE '[0-9a-f]{40}'; then break; fi
               if [ "$coba" = 1 ]; then sleep 5; fi
@@ -4230,7 +4230,8 @@ jobs:
           export SUBARCH=arm64
           export KBUILD_BUILD_USER=build
           export KBUILD_BUILD_HOST=kernel
-          export KBUILD_BUILD_TIMESTAMP="$(date -u)"
+          KBUILD_BUILD_TIMESTAMP="$(date -u)"
+          export KBUILD_BUILD_TIMESTAMP
 
           # ccache mempercepat run berikutnya secara signifikan. Kalau binernya
           # tidak ada, jatuh balik ke clang polos supaya build tetap jalan.
@@ -4606,6 +4607,9 @@ jobs:
           fi
 
       - name: Rakit paket AnyKernel3 (template asli fjrXTR -> vlxlxlv)
+        env:
+          KIMG_PATH: ${{ steps.kimg.outputs.path }}
+          KIMG_NAME: ${{ steps.kimg.outputs.name }}
         run: |
           # PENTING: branch default repo ini adalah 'ruby', bukan 'master'. Tanpa -b
           # isi paket ikut berubah diam-diam kalau pemilik repo ganti default.
@@ -4698,7 +4702,7 @@ jobs:
           ## end boot install
           ANYKERNEL_SH
 
-          cp "${{ steps.kimg.outputs.path }}" "AnyKernel3/${{ steps.kimg.outputs.name }}"
+          cp "$KIMG_PATH" "AnyKernel3/$KIMG_NAME"
 
           ZIP="rosemary-xxksu-susfs-nomount-$(date +%Y%m%d-%H%M%S).zip"
 
@@ -4731,7 +4735,7 @@ jobs:
             echo ""
             # Alasan yang sama dengan blok kembarannya di step "Terbitkan
             # Release", dengan satu tambahan: step ini `if: always()`, jadi
-            # untuk build yang GAGAL inilah satu-satunya tempat keenam pin
+            # untuk build yang GAGAL inilah satu-satunya tempat ketujuh pin
             # tercatat - rilisnya tidak pernah terbit. Sumbernya tetap
             # /tmp/pins.export, bukan daftar nama baru.
             if [ -s /tmp/pins.export ]; then

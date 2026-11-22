@@ -85,13 +85,28 @@ jobs:
           done < /tmp/rilis
           printf '\nRilis: %s disimpan, %s dihapus.\n\n' "$simpan" "$hapus" >> "$GITHUB_STEP_SUMMARY"
 
+          # Simpan tepat 1 ccache terbaru di branch default (refs/heads/main) agar
+          # build cabang uji tidak membuat cache utama ikut terhapus (cache cabang
+          # non-default tidak dapat dipakai oleh build di main).
           gh cache list --key ccache-rosemary- --sort created_at --order desc \
-            --limit 100 --json id,key --jq '.[] | "\(.id) \(.key)"' > /tmp/cache || true
+            --limit 100 --json id,key,ref --jq '.[] | "\(.id) \(.ref) \(.key)"' > /tmp/cache || true
+          SIMPAN_MAIN=0
+          HAS_MAIN=0
+          if grep -q ' refs/heads/main ' /tmp/cache 2>/dev/null; then HAS_MAIN=1; fi
           c=0
-          while read -r ID KEY; do
+          while read -r ID REF KEY; do
             [ -n "${ID:-}" ] || continue
             c=$((c + 1))
-            [ "$c" = 1 ] && { printf 'Cache disimpan: `%s`\n' "$KEY" >> "$GITHUB_STEP_SUMMARY"; continue; }
+            if [ "$HAS_MAIN" = 1 ]; then
+              if [ "$REF" = "refs/heads/main" ] && [ "$SIMPAN_MAIN" = 0 ]; then
+                SIMPAN_MAIN=1
+                printf 'Cache disimpan: `%s` (`%s`)\n' "$KEY" "$REF" >> "$GITHUB_STEP_SUMMARY"
+                continue
+              fi
+            elif [ "$c" = 1 ]; then
+              printf 'Cache disimpan: `%s` (`%s`)\n' "$KEY" "$REF" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
             [ "$COBA" = true ] || gh cache delete "$ID"
-            printf 'Cache dihapus: `%s`\n' "$KEY" >> "$GITHUB_STEP_SUMMARY"
+            printf 'Cache dihapus: `%s` (`%s`)\n' "$KEY" "$REF" >> "$GITHUB_STEP_SUMMARY"
           done < /tmp/cache
