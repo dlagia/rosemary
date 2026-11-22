@@ -156,6 +156,15 @@ klik step yang bertanda X:
 - **Clone / fetch gagal, `not our ref`, `couldn't find remote ref`**: commit
   hilang di upstream (lihat "Upstream hilang"), atau GitHub sedang gangguan
   (tekan *Re-run jobs*).
+- **`HTTP 403: Resource not accessible by integration` di step "Terbitkan
+  Release" atau tombol "Tandai terbukti boot"**: isi `.github/workflows/`
+  di commit yang dibangun berbeda dari `main` saat itu, misalnya ada push
+  workflow lain selagi build jalan, atau rilis berasal dari cabang uji yang
+  sudah dihapus. Token Actions tidak boleh membuat tag di commit seperti itu.
+  Kernel tidak rusak. Untuk build: tekan *Run workflow* lagi di `main`, dan
+  jangan push perubahan workflow selama build berjalan. Untuk tag titik:
+  ikuti perintah `gh api ... git/refs` yang dicetak tombol itu, lalu
+  jalankan tombolnya lagi.
 - **Assert / `ERROR: ...` di step integrasi (xxKSU, SUSFS, NoMount, SUBLEVEL)**: upstream
   mengubah bentuk kode yang ditambal workflow ini. Paling aman:
   **Kembali ke titik**, lalu tunggu upstream stabil, atau naikkan komponen
