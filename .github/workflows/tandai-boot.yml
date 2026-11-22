@@ -67,7 +67,17 @@ jobs:
           if gh api "repos/${GH_REPO}/git/ref/tags/${TITIK}" >/dev/null 2>&1; then
             echo "Tag $TITIK sudah ada - dibiarkan."
           else
-            gh api "repos/${GH_REPO}/git/refs" -f ref="refs/tags/${TITIK}" -f sha="$SHA" >/dev/null
+            # GITHUB_TOKEN tidak punya izin `workflows`: GitHub menolak (403)
+            # membuat ref ke commit yang mengubah .github/workflows/ dan tidak
+            # lagi ada di cabang mana pun (mis. rilis uji dari cabang yang
+            # sudah dihapus). Tag itu dibuat pemilik sekali, lalu tombol ini
+            # dijalankan ulang (cabang "sudah ada" di atas melanjutkannya).
+            if ! gh api "repos/${GH_REPO}/git/refs" -f ref="refs/tags/${TITIK}" -f sha="$SHA" >/dev/null; then
+              echo "::error::Tag $TITIK tidak bisa dibuat oleh GITHUB_TOKEN (commit ${SHA:0:9} kemungkinan dari cabang uji yang sudah dihapus dan mengubah workflow)."
+              echo "Buat sekali dengan akun pemilik: gh api repos/${GH_REPO}/git/refs -f ref=refs/tags/${TITIK} -f sha=${SHA}"
+              echo "lalu jalankan tombol ini lagi."
+              exit 1
+            fi
             echo "Tag $TITIK dibuat di ${SHA:0:9}."
           fi
 
