@@ -1,8 +1,8 @@
 # rosemary
 
 Kernel Xiaomi rosemary (Redmi Note 10S, Linux 4.14) dengan xxKSU
-(backslashxx/KernelSU) + SUSFS v2.4.0 ala Najip (glue parent-kernel) + NoMount
-+ fgetpriority, `uname -r` = `4.14.186-perf` (sama dengan kernel stok),
+(backslashxx/KernelSU) + SUSFS v2.4.0 ala Najip (glue parent-kernel, opsi
+SUSFS = JackA1ltman) + NoMount, `uname -r` = `4.14.186-perf` (sama dengan kernel stok),
 dibangun otomatis oleh GitHub Actions. Ini cabang uji `susfs-najip`: rilisnya
 prerelease, belum diflash; `main` tetap tanpa susunan ini.
 

@@ -2,7 +2,8 @@
 # Workflow GitHub Actions: Build Kernel Xiaomi Rosemary (kernel 4.14)
 # Cabang susfs-najip (2026-11-22): xxKSU (backslashxx/KernelSU) + SUSFS
 # v2.4.0 ala Najip (patch 4.14 JackA1ltman + glue parent-kernel + patch
-# lifecycle 0002 Najip, TANPA BakaSU) + NoMount + fgetpriority. Cabang uji:
+# lifecycle 0002 Najip, TANPA BakaSU) + NoMount; fgetpriority dicabut,
+# opsi SUSFS mengikuti JackA1ltman (11 opsi =y). Cabang uji:
 # rilisnya selalu prerelease dan tidak pernah jadi "Latest" di main.
 # Seluruh riwayat BakaSU/ReSukiSU + SUSFS di bawah (revisi ke-1 s/d ke-117)
 # dibiarkan sebagai catatan sejarah; langkah-langkahnya sudah dicabut dari
@@ -25,9 +26,7 @@
 #    eks-fjrXTR)
 # 7. BBR + fq, setelan memori (swappiness 100, zram lz4), tambalan
 #    CVE-2026-43499 dan WARN flush_work blk-core
-# 8. fgetpriority (aerath-stuff, built-in): penyaring getpriority/ioprio.
-#    Karena itu CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER sengaja MATI.
-# Kesembilan sumber dipin SHA di pins.env; riwayat revisi di bawah dan di
+# Kedelapan sumber dipin SHA di pins.env; riwayat revisi di bawah dan di
 # pins.env.
 #
 # Repo dlagia/rosemary: revisi ke-1 s/d ke-133c dikerjakan di repo
@@ -1590,11 +1589,11 @@
 #
 # CABANG SUSFS-NAJIP (2026-11-22) - SUSFS v2.4.0 ala Najip di atas
 # rosemary-4 (bf2adcd). main TIDAK disentuh cabang ini.
-# (a) Dua pin baru (total sembilan): SUSFS_PIN ec069a4e3
+# (a) Dua pin baru, FGETPRIORITY_PIN dicabut (total delapan): SUSFS_PIN ec069a4e3
 #     (JackA1ltman/NonGKI_Kernel_Build_2nd, susfs_patch_to_4.14.patch) dan
 #     NAJIP_PIN 018c4deb0 (Najip/KernelSU_SUSFS_Samsung_SM-A325X). KSU_PIN
 #     8c1579be4 (ORPHAN, rebase 31/31) -> 540360f50: diff kernel/ cuma jalur
-#     OABI ARM32. Kesembilan pin = HEAD upstream tanpa ORPHAN. Dari
+#     OABI ARM32. Kedelapan pin = HEAD upstream tanpa ORPHAN. Dari
 #     Najip hanya patches/kernelsu/0002-susfs-lifecycle-calls.patch yang
 #     dipakai, diterapkan apa adanya ke KernelSU dan dikunci sha256.
 #     Yang TIDAK diambil dari Najip: 0001-native-wrappers (hook manual),
@@ -1608,21 +1607,21 @@
 #     super/namespace/avc/susfs.c, reboot.c root-only (non-root tetap
 #     -EPERM), kallsyms menyembunyikan xxksu_*. Tambahan cabang ini:
 #     is_ksu_domain dirujuk kuat (bukan __weak, gagal link > diam-diam
-#     false), kallsyms juga menyembunyikan simbol fgetpriority, patch
-#     lifecycle diverifikasi letaknya karena butuh fuzz 2.
-# (c) Beda sengaja dengan main: fgetpriority DIPERTAHANKAN (terbukti boot
-#     sejak revisi ke-120) sehingga CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
-#     MATI - opsi itu mengubah badan sys_getpriority yang di-patch
-#     fgetpriority saat runtime. CONFIG_KSU_SUSFS_ENABLE_LOG juga mati
-#     (default Najip, dmesg bersih).
+#     false), patch lifecycle diverifikasi letaknya karena butuh fuzz 2.
+# (c) Opsi SUSFS = daftar JackA1ltman (.github/workflows/patch-susfs/
+#     action.yml): 11 opsi =y, termasuk ENABLE_LOG dan PRIORITY_UID_FILTER
+#     (Jack menulis baris PRIORITY tanpa '=y'; di sini ditulis benar).
+#     fgetpriority dicabut (permintaan pemilik: ikut Jack); penyaringan
+#     getpriority/ioprio kini oleh SUSFS PRIORITY_UID_FILTER.
 # (d) Bug tersembunyi main yang tidak terulang di sini: build dari cabang
 #     uji-susfs-xxksu terbit sebagai rilis biasa dan sempat jadi "Latest".
 #     Di cabang ini setiap rilis di luar refs/heads/main = --prerelease
 #     --latest=false.
 #     Fixer SUSFS_LOGI_RL/LOGE_RL di main tidak pernah cocok (upstream
 #     menulis '#define SUSFS_LOGI(fmt, ...) ' dengan spasi di ujung); main
-#     lolos hanya karena ENABLE_LOG=y. Dengan ENABLE_LOG mati build pertama
-#     cabang ini gagal di fs/susfs.c:112. Kini regex + assert wajib.
+#     lolos hanya karena ENABLE_LOG=y. Build pertama cabang ini (waktu itu
+#     ENABLE_LOG mati) membuktikannya:
+#     build ENABLE_LOG=n gagal di fs/susfs.c:112. Kini regex + assert wajib.
 # (e) Status: belum diflash. Mundur: rilis build-20261122-034128 (bf2adcd).
 # ============================================================
 
@@ -1670,7 +1669,7 @@ jobs:
   #
   # Gerbang ini menjawab satu pertanyaan: adakah yang benar-benar berubah bagi
   # kernel hasil build? Yang dihitung cuma dua - berkas selain pins.env
-  # (workflow ini sendiri termasuk) dan NILAI kesembilan SHA. Komentar pins.env
+  # (workflow ini sendiri termasuk) dan NILAI kedelapan SHA. Komentar pins.env
   # bukan salah satunya.
   #
   # SETIAP jalur ragu berakhir lanjut=1, tidak pernah 0: token gagal, compare
@@ -1688,7 +1687,7 @@ jobs:
   # Hal yang sama terjadi kalau build X GAGAL lalu komentar menyusul. Pertanyaan
   # yang benar bukan "apa beda dari push sebelumnya" tapi "apa beda dari kernel
   # yang terakhir benar-benar terbit". Yang dihitung pun cuma dua: berkas
-  # workflow build ini dan NILAI kesembilan SHA. Workflow robot (pin-watch,
+  # workflow build ini dan NILAI kedelapan SHA. Workflow robot (pin-watch,
   # naikkan-pin) tidak ikut mengompilasi, jadi tidak memicu rilis kembar.
   gerbang:
     # Revisi ke-55: 22.04 -> 24.04. ubuntu-22.04 mulai dipensiunkan
@@ -1786,7 +1785,7 @@ jobs:
                     alasan="pins.env sesudah push cuma terbaca ${N_BARU:-0} baris pin - dibangun, biar step 'Muat pins.env' yang memvonis"
                   elif [ "$PIN_LAMA" = "$PIN_BARU" ]; then
                     lanjut=0
-                    alasan="kesembilan SHA dan workflow build sama persis dengan rilis ${TAG_LATEST} (${SEBELUM:0:9}) - TIDAK dibangun"
+                    alasan="kedelapan SHA dan workflow build sama persis dengan rilis ${TAG_LATEST} (${SEBELUM:0:9}) - TIDAK dibangun"
                   else
                     alasan="nilai pin beda dari rilis ${TAG_LATEST} - dibangun"
                   fi
@@ -1865,14 +1864,14 @@ jobs:
           # kepala loop ini, sekali lagi (secara tersirat, sebagai pola
           # [A-Z0-9_]+) di baris yang mengekspor ke $GITHUB_ENV. Sekarang satu
           # daftar dipakai keduanya.
-          # Cabang susfs-najip: sembilan nama (SUSFS_PIN + NAJIP_PIN ditambahkan).
+          # Cabang susfs-najip: delapan nama (SUSFS_PIN + NAJIP_PIN ditambahkan,
+          # FGETPRIORITY_PIN dicabut - opsi SUSFS mengikuti JackA1ltman).
           # Revisi ke-120: tujuh nama (FGETPRIORITY_PIN ditambahkan; fgetpriority
           # built-in, hook getpriority/ioprio).
           # Revisi ke-118: enam nama (SCRIPTS_PIN dan SUSFS_PIN dicabut bersama
           # BakaSU + SUSFS).
           WAJIB="KERNEL_PIN KSU_PIN SUSFS_PIN NAJIP_PIN
-                 NOMOUNT_PIN NOMOUNT_LOADER_PIN CLANG_PIN AK3_PIN
-                 FGETPRIORITY_PIN"
+                 NOMOUNT_PIN NOMOUNT_LOADER_PIN CLANG_PIN AK3_PIN"
           for n in $WAJIB; do
             N_BARIS="$(grep -cE "^${n}=[0-9a-f]{40}$" /tmp/pins.env || true)"
             if [ "$N_BARIS" != "1" ]; then
@@ -1895,13 +1894,13 @@ jobs:
             grep -E "^${n}=[0-9a-f]{40}$" /tmp/pins.env >> /tmp/pins.export
           done
 
-          # Baris yang lolos bentuk tapi bukan salah satu dari sembilan bukan
+          # Baris yang lolos bentuk tapi bukan salah satu dari delapan bukan
           # error - pins.env boleh lebih dulu memuat pin untuk step yang belum
           # ditulis - tapi WAJIB kelihatan. Diabaikan diam-diam persis cara
           # sebuah salinan kedua jadi basi tanpa ketahuan (revisi ke-26..28).
           if ASING="$(grep -E '^[A-Z0-9_]+=[0-9a-f]{40}$' /tmp/pins.env \
                       | grep -vxF -f /tmp/pins.export)"; then
-            echo "CATATAN: baris berbentuk sah tapi DI LUAR sembilan nama - tidak diekspor:"
+            echo "CATATAN: baris berbentuk sah tapi DI LUAR delapan nama - tidak diekspor:"
             printf '%s\n' "$ASING" | sed 's/^/  /'
           fi
 
@@ -2674,7 +2673,7 @@ jobs:
           config KSU_SUSFS_ENABLE_LOG
           	bool "Log SUSFS messages to the kernel log"
           	depends on KSU_SUSFS
-          	default n
+          	default y
 
           config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
           	bool "Hide ksu and susfs symbols from /proc/kallsyms"
@@ -2699,11 +2698,7 @@ jobs:
           config KSU_SUSFS_PRIORITY_UID_FILTER
           	bool "Priority UID filter (getpriority/ioprio hiding)"
           	depends on KSU_SUSFS
-          	default n
-          	help
-          	  Off in this build: fgetpriority already filters getpriority and
-          	  ioprio, and it runtime-patches the body of sys_getpriority that
-          	  this option would change.
+          	default y
 
           endmenu
           KCONFIG_SUSFS
@@ -2962,14 +2957,8 @@ jobs:
                 '\t\t\tsusfs_starts_with(iter->name, "susfs_") ||\n',
                 '\t\t\tsusfs_starts_with(iter->name, "__ksu_") ||\n'
                 '\t\t\tsusfs_starts_with(iter->name, "xxksu_") ||\n'
-                '\t\t\tsusfs_starts_with(iter->name, "fgetpriority") ||\n'
-                '\t\t\tsusfs_starts_with(iter->name, "__initcall_fgetpriority") ||\n'
-                '\t\t\tsusfs_starts_with(iter->name, "getpriority_hook_") ||\n'
-                '\t\t\tsusfs_starts_with(iter->name, "getpriority_kp_") ||\n'
-                '\t\t\tsusfs_starts_with(iter->name, "kp_find_user") ||\n'
-                '\t\t\tsusfs_starts_with(iter->name, "gphook_") ||\n'
                 '\t\t\tsusfs_starts_with(iter->name, "susfs_") ||\n',
-                "kernel/kallsyms.c -> sembunyikan simbol xxksu_* + fgetpriority")
+                "kernel/kallsyms.c -> sembunyikan simbol xxksu_*")
           WIRE_SUSFS_GLUE_PY
 
           # Verifikasi akhir integrasi SUSFS + glue
@@ -3573,151 +3562,6 @@ jobs:
           echo "NOMOUNT_SHA=$(git -C NoMount rev-parse --short=9 HEAD)" >> "$GITHUB_ENV"
           echo "NoMount branch dev: OK"
 
-      - name: Integrasikan fgetpriority (hook getpriority/ioprio, built-in, di-PIN)
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-
-          # fgetpriority = LKM kecil backslashxx (penulis xxKSU) yang menyaring
-          # hasil sys_getpriority/setpriority/ioprio_get/ioprio_set, supaya proses
-          # app tidak terdeteksi lewat prioritas. Pengganti SUSFS priority-uid-
-          # filter yang hilang saat pindah ke xxKSU (revisi ke-118). Dikompilasi
-          # BUILT-IN (CONFIG_FGETPRIORITY=y), bukan modul: jalur "just compile it
-          # in" resmi penulisnya, jadi bebas masalah LKM (init_user_ns tidak
-          # diekspor ke modul = issue #14, vermagic). FGETPRIORITY_PIN dari
-          # pins.env (revisi ke-120).
-          #
-          # Dukungan 4.14 ADA tapi tidak diuji upstream (matriks DDK mulai 5.10).
-          # Yang membuatnya jalan di 4.14 dijaga eksplisit di bawah; kalau
-          # upstream refactor dan satu penjaga jatuh, build GAGAL di sini - bukan
-          # diam-diam di HP. Jaring terakhir saat runtime: kalau patch cabang
-          # B/BL gagal, init jatuh ke kprobe pada find_user.
-
-          for p in fgetpriority drivers/fgetpriority; do
-            if [ -e "$p" ] || [ -L "$p" ]; then
-              echo "ERROR: $p sudah ada sebelum integrasi - source kernel berubah."
-              exit 1
-            fi
-          done
-
-          # Clone + ambil SHA pin per-hash (orphan-proof, pola sama NoMount).
-          git clone -q https://github.com/aerath-stuff/fgetpriority fgp-src
-          git -C fgp-src fetch -q origin "$FGETPRIORITY_PIN" || true
-          git -C fgp-src checkout -q "$FGETPRIORITY_PIN"
-          test "$(git -C fgp-src rev-parse HEAD)" = "$FGETPRIORITY_PIN" || {
-            echo "ERROR: fgetpriority tidak ter-checkout ke pin $FGETPRIORITY_PIN"
-            echo "HEAD aktual: $(git -C fgp-src rev-parse HEAD)"
-            exit 1
-          }
-
-          # Unity build: hanya main.o; main.c meng-include routine_*.c + header.
-          # Revisi ke-124: daftar berkas tidak lagi ditulis satu per satu.
-          # Upstream 9a38e02b0 mengganti nama arm64_branch_insn.h menjadi
-          # arm64_branch_patch.h, dan daftar lama membuat build GAGAL di sini.
-          # Kini semua *.c dan *.h di kernel/ upstream disalin, lalu setiap
-          # '#include "..."' lokal wajib ada di drivers/fgetpriority/. Kalau
-          # upstream memindah header ke luar kernel/, build tetap berhenti di
-          # sini dengan pesan jelas, bukan di tengah compile. Berlaku juga
-          # saat pin mundur ke 178dd7479 (nama header lama).
-          mkdir drivers/fgetpriority
-          for f in main.c routine_kp.c routine_raw.c Makefile Kconfig; do
-            test -s "fgp-src/kernel/$f" || { echo "ERROR: fgp-src/kernel/$f tidak ada - struktur upstream berubah"; exit 1; }
-          done
-          cp fgp-src/kernel/*.c fgp-src/kernel/*.h fgp-src/kernel/Makefile fgp-src/kernel/Kconfig drivers/fgetpriority/
-          for f in drivers/fgetpriority/*.c drivers/fgetpriority/*.h; do
-            sed -nE 's/^[[:space:]]*#[[:space:]]*include[[:space:]]+"([^"]+)".*/\1/p' "$f" | while IFS= read -r inc; do
-              test -s "drivers/fgetpriority/$inc" || {
-                echo "ERROR: $f meng-include \"$inc\" yang tidak ada di kernel/ upstream - audit ulang"
-                exit 1
-              }
-            done
-          done
-          echo "OK: berkas fgetpriority disalin:" drivers/fgetpriority/*
-
-          # Kconfig upstream: 'config FGETPRIORITY' tristate default m, depends on
-          # ARM64 && KALLSYMS. Dipaksa =y lewat defconfig; pastikan simbolnya ada
-          # supaya Kconfig tidak membuangnya diam-diam.
-          test "$(grep -cxF 'config FGETPRIORITY' drivers/fgetpriority/Kconfig)" = "1" || {
-            echo "ERROR: 'config FGETPRIORITY' tidak ketemu tepat 1x di Kconfig - audit ulang"
-            exit 1
-          }
-          grep -qF 'obj-$(CONFIG_FGETPRIORITY) += fgetpriority.o' drivers/fgetpriority/Makefile || {
-            echo "ERROR: Makefile fgetpriority tidak lagi membangun fgetpriority.o - audit ulang"
-            exit 1
-          }
-          grep -qF 'fgetpriority-y := main.o' drivers/fgetpriority/Makefile || {
-            echo "ERROR: Makefile fgetpriority tidak lagi unity (main.o) - audit ulang"
-            exit 1
-          }
-
-          # Sambung ke drivers/Kconfig (sisip sebelum endmenu terakhir, idempoten).
-          python3 - << 'PYEOF'
-          p = "drivers/Kconfig"
-          kc = 'source "drivers/fgetpriority/Kconfig"\n'
-          with open(p) as f:
-              lines = f.readlines()
-          if kc in lines:
-              print("OK: source fgetpriority/Kconfig sudah ada di drivers/Kconfig")
-          else:
-              idx = [i for i, l in enumerate(lines) if l.strip() == "endmenu"]
-              if not idx:
-                  print("ERROR: tidak ada 'endmenu' di drivers/Kconfig")
-                  raise SystemExit(1)
-              lines.insert(idx[-1], kc)
-              with open(p, "w") as f:
-                  f.writelines(lines)
-              print("Disisipkan source fgetpriority/Kconfig sebelum endmenu terakhir")
-          PYEOF
-
-          # Sambung ke drivers/Makefile (idempoten).
-          MK='obj-$(CONFIG_FGETPRIORITY) += fgetpriority/'
-          if [ "$(grep -cxF "$MK" drivers/Makefile)" = "0" ]; then
-            printf '\n%s\n' "$MK" >> drivers/Makefile
-          fi
-
-          KC='source "drivers/fgetpriority/Kconfig"'
-          N_KC=$(grep -cxF "$KC" drivers/Kconfig || true)
-          N_MK=$(grep -cxF "$MK" drivers/Makefile || true)
-          if [ "$N_KC" != "1" ] || [ "$N_MK" != "1" ]; then
-            echo "ERROR: entri fgetpriority drivers/Kconfig=$N_KC drivers/Makefile=$N_MK (masing-masing wajib 1)"
-            grep -n fgetpriority drivers/Kconfig drivers/Makefile || true
-            exit 1
-          fi
-          echo "OK: drivers/Kconfig + drivers/Makefile berisi tepat satu entri fgetpriority"
-
-          # ---- PENJAGA 4.14 BUILT-IN (revisi ke-120) ----
-          M=drivers/fgetpriority
-          # (1) Nama syscall <4.17 pakai bentuk telanjang (sys_getpriority), bukan
-          #     __arm64_sys_. Kernel 4.14 < 4.17, cabang ini WAJIB ada - kalau
-          #     hilang, 4.14 mencari simbol __arm64_sys_* yang tidak ada.
-          if ! grep -qF 'kallsyms_lookup_name("__arm64_" name)' "$M/routine_raw.c" \
-             || ! grep -qF 'kallsyms_lookup_name(name)' "$M/routine_raw.c"; then
-            echo "ERROR: syscall_lookup kehilangan cabang nama telanjang (<4.17) - audit ulang"
-            exit 1
-          fi
-          # (2) copy_from_kernel_nofault punya fallback <5.8 (4.14 belum punya API-nya).
-          grep -qF 'KERNEL_VERSION(5, 8, 0)' "$M/main.c" || {
-            echo "ERROR: fallback copy_from_kernel_nofault (<5.8) hilang - 4.14 tidak punya simbol itu"
-            exit 1
-          }
-          # (3) Keempat callsite syscall tetap di-hook.
-          for s in sys_getpriority sys_setpriority sys_ioprio_set sys_ioprio_get; do
-            grep -qF "syscall_lookup(\"$s\")" "$M/routine_raw.c" || {
-              echo "ERROR: callsite $s tidak lagi di-hook - audit ulang"
-              exit 1
-            }
-          done
-          # (4) Jaring kprobe pada find_user tetap ada (kalau raw-patch gagal).
-          grep -qF 'init_kprobe("find_user"' "$M/routine_kp.c" || {
-            echo "ERROR: jaring kprobe find_user hilang - tidak ada fallback kalau raw-patch gagal"
-            exit 1
-          }
-          echo "OK: penjaga 4.14 built-in lolos (nama syscall telanjang, fallback <5.8, 4 callsite, kprobe)"
-
-          echo "FGP_SHA=$(git -C fgp-src rev-parse --short=9 HEAD)" >> "$GITHUB_ENV"
-          rm -rf fgp-src
-          echo "Integrasi fgetpriority: SUKSES (built-in)"
-
       - name: Pastikan tidak ada residu Re:Kernel & Baseband-guard
         working-directory: kernel
         run: |
@@ -4172,7 +4016,7 @@ jobs:
           echo "== Ringkasan timeout_work blk-core =="
           grep -n 'INIT_WORK(&q->timeout_work' block/blk-core.c || true
 
-      - name: Aktifkan xxKSU, SUSFS, NoMount & fgetpriority di defconfig
+      - name: Aktifkan xxKSU, SUSFS & NoMount di defconfig
         working-directory: kernel
         run: |
           DEF=arch/arm64/configs/rosemary_defconfig
@@ -4180,9 +4024,8 @@ jobs:
           # ----- AUDIT STRUKTUR (revisi ke-118 + cabang susfs-najip) -----
           # xxKSU (backslashxx/KernelSU) memakai hook tabel syscall + LSM.
           # SUSFS v2.4.0 (fs/Kconfig.susfs) hidup di parent kernel tanpa
-          # mengubah mode hook xxKSU dan tanpa BakaSU. PRIORITY_UID_FILTER
-          # dan ENABLE_LOG ditulis eksplisit mati: yang pertama bentrok
-          # dengan fgetpriority, yang kedua default Najip (dmesg bersih).
+          # mengubah mode hook xxKSU dan tanpa BakaSU. Sebelas opsi =y =
+          # daftar JackA1ltman (.github/workflows/patch-susfs/action.yml).
           if grep -nE '^(# )?CONFIG_KSU' "$DEF"; then
             echo "ERROR: $DEF sudah berisi baris CONFIG_KSU sebelum step ini."
             exit 1
@@ -4199,14 +4042,14 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
             echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
             echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
-            echo "# CONFIG_KSU_SUSFS_ENABLE_LOG is not set"
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
             echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
             echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
             echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
             echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
-            echo "# CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER is not set"
+            echo "CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y"
           } >> "$DEF"
-          echo "[defconfig] xxKSU + SUSFS v2.4.0 (9 opsi =y; ENABLE_LOG & PRIORITY_UID_FILTER mati)"
+          echo "[defconfig] xxKSU + SUSFS v2.4.0 (11 opsi =y, daftar JackA1ltman)"
 
           {
             echo ""
@@ -4221,17 +4064,6 @@ jobs:
             echo "CONFIG_NOMOUNT=y"
           } >> "$DEF"
           echo "[defconfig] CONFIG_NOMOUNT=y ditambahkan"
-
-          # fgetpriority selalu ikut (revisi ke-120), built-in.
-          if grep -qE '^(# )?CONFIG_FGETPRIORITY\b' "$DEF"; then
-            echo "ERROR: $DEF sudah berisi CONFIG_FGETPRIORITY sebelum step ini."
-            exit 1
-          fi
-          {
-            echo ""
-            echo "CONFIG_FGETPRIORITY=y"
-          } >> "$DEF"
-          echo "[defconfig] CONFIG_FGETPRIORITY=y ditambahkan"
 
           # ----- BBR + fq (revisi ke-12, 2026-09-11) -----
           # Tidak ada patch source sama sekali di sini: tcp_bbr.c dan sch_fq.c
@@ -4457,22 +4289,18 @@ jobs:
             CONFIG_KSU_SUSFS_SUS_MOUNT \
             CONFIG_KSU_SUSFS_SUS_KSTAT \
             CONFIG_KSU_SUSFS_SPOOF_UNAME \
+            CONFIG_KSU_SUSFS_ENABLE_LOG \
             CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
             CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
             CONFIG_KSU_SUSFS_OPEN_REDIRECT \
-            CONFIG_KSU_SUSFS_SUS_MAP; do
+            CONFIG_KSU_SUSFS_SUS_MAP \
+            CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER; do
             grep -q "^${opt}=y\$" out/.config || {
               echo "ERROR: ${opt} tidak resolve ke y di out/.config"
               exit 1
             }
           done
-          for opt in CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER; do
-            if grep -q "^${opt}=y\$" out/.config; then
-              echo "ERROR: ${opt}=y padahal sengaja mati (bentrok fgetpriority / dmesg bersih)"
-              exit 1
-            fi
-          done
-          echo "OK: xxKSU =y (tabel syscall + LSM) + SUSFS v2.4.0 (9 opsi =y, 2 opsi mati)."
+          echo "OK: xxKSU =y (tabel syscall + LSM) + SUSFS v2.4.0 (11 opsi =y)."
 
           # Revisi ke-118: string versi diperiksa SEBELUM sembilan menit
           # kompilasi. scripts/setlocalversion pohon ini menyusun release dari
@@ -4517,11 +4345,10 @@ jobs:
           grep -E '^CONFIG_NOMOUNT' out/.config || true
           grep -q '^CONFIG_NOMOUNT=y$' out/.config || { echo "ERROR: CONFIG_NOMOUNT tidak resolve ke y"; exit 1; }
 
-          echo ""
-          echo "==================== RESOLVED fgetpriority CONFIG ===================="
-          grep -E '^CONFIG_FGETPRIORITY' out/.config || true
-          grep -q '^CONFIG_FGETPRIORITY=y$' out/.config || { echo "ERROR: CONFIG_FGETPRIORITY tidak resolve ke y"; exit 1; }
-          echo "OK: CONFIG_FGETPRIORITY=y (objek + simbol dicek sesudah kompilasi)"
+          if grep -qE '^CONFIG_FGETPRIORITY=' out/.config; then
+            echo "ERROR: CONFIG_FGETPRIORITY masih aktif padahal sudah dicabut (ikut JackA1ltman)"
+            exit 1
+          fi
 
           echo ""
           echo "==================== RESOLVED BBR + fq CONFIG ===================="
@@ -4663,19 +4490,6 @@ jobs:
           done
           echo "OK: banner 4.14.186-perf + handler tabel syscall xxKSU ada di hasil build."
 
-          # fgetpriority: objek + simbol di vmlinux membuktikan ikut dikompilasi
-          # DAN ter-link built-in (bukan cuma CONFIG_FGETPRIORITY=y di .config).
-          test -f out/drivers/fgetpriority/main.o || {
-            echo "ERROR: out/drivers/fgetpriority/main.o tidak terbentuk - fgetpriority tidak ikut dikompilasi"
-            exit 1
-          }
-          grep -qE '^[0-9a-f]+ [Tt] gphook_find_user$' out/System.map || {
-            echo "ERROR: simbol gphook_find_user tidak ada di System.map - fgetpriority tidak ter-link ke vmlinux"
-            grep -c 'fgetpriority\|gphook' out/System.map || true
-            exit 1
-          }
-          echo "OK: fgetpriority built-in (main.o + gphook_find_user di vmlinux)."
-
           # Cabang susfs-najip: objek + simbol SUSFS & glue di vmlinux membuktikan
           # susfs.c, susfs_ksu_glue.c dan xxksu_susfs_lifecycle.c benar-benar
           # terkompilasi dan tertaut bersama xxKSU.
@@ -4686,17 +4500,13 @@ jobs:
             }
           done
           for sym in susfs_init susfs_ksu_handle_cmd susfs_is_current_ksu_domain \
-                     xxksu_parent_reset_task xxksu_parent_finish_umount \
+                     susfs_set_priority_uid_filter xxksu_parent_reset_task xxksu_parent_finish_umount \
                      xxksu_parent_post_fs_data xxksu_parent_packages_changed; do
             grep -qE "^[0-9a-f]+ [Tt] ${sym}\$" out/System.map || {
               echo "ERROR: simbol $sym tidak ada di System.map - glue SUSFS tidak tertaut ke vmlinux"
               exit 1
             }
           done
-          if grep -qE '^[0-9a-f]+ [Tt] susfs_set_priority_uid_filter$' out/System.map; then
-            echo "ERROR: susfs_set_priority_uid_filter ikut tertaut padahal PRIORITY_UID_FILTER mati"
-            exit 1
-          fi
           echo "OK: SUSFS + glue parent-kernel tertaut di vmlinux."
           command -v ccache >/dev/null 2>&1 && ccache -s | head -8 || true
 
@@ -4903,11 +4713,11 @@ jobs:
             echo "| Add-on | Status |"
             echo "|---|---|"
             echo "| NoMount        | aktif (selalu ikut) |"
-            echo "| fgetpriority   | aktif (built-in, hook getpriority/ioprio) |"
             echo "| BBR + fq       | aktif (congestion control default \`bbr\`, qdisc default \`fq\`) |"
             echo "| Re:Kernel      | dicabut permanen (revisi ke-11) |"
             echo "| Baseband-guard | dicabut permanen (revisi ke-11) |"
-            echo "| SUSFS          | aktif (${SUSFS_VER:-v2.4.0} ala Najip, glue parent-kernel di atas xxKSU; priority UID filter mati) |"
+            echo "| SUSFS          | aktif (${SUSFS_VER:-v2.4.0} ala Najip, glue parent-kernel di atas xxKSU, 11 opsi JackA1ltman termasuk priority UID filter) |"
+            echo "| fgetpriority   | dicabut (diganti SUSFS priority UID filter, ikut JackA1ltman) |"
             echo ""
             echo "| Komponen | Commit |"
             echo "|---|---|"
@@ -4916,15 +4726,14 @@ jobs:
             echo "| SUSFS (di-PIN, ${SUSFS_VER:-?}) | \`${SUSFS_SHA:-?}\` |"
             echo "| Najip lifecycle 0002 (di-PIN) | \`${NAJIP_SHA:-?}\` |"
             echo "| NoMount (di-PIN) | \`${NOMOUNT_SHA:-?}\` |"
-            echo "| fgetpriority (di-PIN) | \`${FGP_SHA:-?}\` |"
             echo ""
             # Alasan yang sama dengan blok kembarannya di step "Terbitkan
             # Release", dengan satu tambahan: step ini `if: always()`, jadi
-            # untuk build yang GAGAL inilah satu-satunya tempat kesembilan pin
+            # untuk build yang GAGAL inilah satu-satunya tempat kedelapan pin
             # tercatat - rilisnya tidak pernah terbit. Sumbernya tetap
             # /tmp/pins.export, bukan daftar nama baru.
             if [ -s /tmp/pins.export ]; then
-              echo "<details><summary>Kesembilan pin yang mengunci build ini</summary>"
+              echo "<details><summary>Kedelapan pin yang mengunci build ini</summary>"
               echo ""
               echo '```'
               cat /tmp/pins.export
@@ -5024,7 +4833,6 @@ jobs:
             printf -- '| SUSFS (%s) | `%s` |\n' "$SUSFS_VER" "$SUSFS_SHA"
             printf -- '| Najip lifecycle 0002 | `%s` |\n' "$NAJIP_SHA"
             printf -- '| NoMount | `%s` |\n' "$NOMOUNT_SHA"
-            printf -- '| fgetpriority | `%s` |\n' "$FGP_SHA"
             # Revisi ke-46: KEDELAPAN pin, bukan tiga. Sejak revisi ke-45c
             # pertanyaan "dua rilis ini isinya sama atau tidak?" dijawab persis
             # dua hal - nilai kedelapan SHA DAN revisi workflow yang
@@ -5041,16 +4849,16 @@ jobs:
             # inilah yang disalin orang ke pins.env waktu mundur, dan penjaga
             # bentuk di step "Muat pins.env" menolak SHA pendek (revisi ke-37).
             if [ -s /tmp/pins.export ]; then
-              printf -- '\n<details><summary>Kesembilan pin yang mengunci build ini</summary>\n\n'
+              printf -- '\n<details><summary>Kedelapan pin yang mengunci build ini</summary>\n\n'
               printf -- '```\n'
               cat /tmp/pins.export
               printf -- '```\n\n'
               printf -- 'Dikompilasi oleh revisi workflow di commit `%s`.\n' "$GITHUB_SHA"
-              printf -- 'Dua rilis berisi kernel yang sama HANYA kalau kesembilan baris di\n'
+              printf -- 'Dua rilis berisi kernel yang sama HANYA kalau kedelapan baris di\n'
               printf -- 'atas DAN commit itu sama persis. Ukuran zip tidak menentukan apa pun.\n'
               printf -- '</details>\n'
             else
-              printf -- '\n> CATATAN: daftar kesembilan pin tidak terbaca (`/tmp/pins.export`\n'
+              printf -- '\n> CATATAN: daftar kedelapan pin tidak terbaca (`/tmp/pins.export`\n'
               printf -- '> kosong) - rilis ini tidak bisa dibandingkan isinya dengan rilis lain\n'
               printf -- '> tanpa membuka log run-nya.\n'
             fi
@@ -5060,7 +4868,7 @@ jobs:
             printf -- '  recovery/KernelSU, tidak perlu dibongkar dulu.\n'
             printf -- '- Kernel ini memakai **xxKSU** (backslashxx/KernelSU) + **SUSFS %s**\n' "$SUSFS_VER"
             printf -- '  (ala Najip: glue parent-kernel + lifecycle 0002, tanpa BakaSU) +\n'
-            printf -- '  **NoMount** + **fgetpriority** (priority UID filter SUSFS mati), uname\n'
+            printf -- '  **NoMount** (opsi SUSFS = JackA1ltman, tanpa fgetpriority), uname\n'
             printf -- '  `4.14.186-perf`. Manager: APK dari halaman rilis\n'
             printf -- '  backslashxx/KernelSU (versi %s); manager BakaSU tidak dikenali.\n' "$KSU_VER"
             printf -- '- `TIF_PROC_UMOUNTED` dipasang otomatis untuk aplikasi non-root\n'
@@ -5356,7 +5164,6 @@ jobs:
           NOMOUNT_PIN;maxsteeel/nomount;nomount
           NOMOUNT_LOADER_PIN;maxsteeel/nomount;nomount-loader
           AK3_PIN;vlxlxlv/AnyKernel3;ak3
-          FGETPRIORITY_PIN;aerath-stuff/fgetpriority;fgetpriority
           DAFTAR
           if [ "$gagal" = 1 ]; then
             printf '\nAda pin yang gagal diarsip - lihat peringatan kuning di atas.\n' >> "$GITHUB_STEP_SUMMARY"

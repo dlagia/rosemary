@@ -11,7 +11,7 @@
 # pernah mendorong commit. Ia cuma membaca pins.env di akar repo (sejak revisi
 # ke-26; kalimat ini sendiri masih menyebut build-kernel-ksu-v2.yml sampai
 # revisi ke-34 - prosa pun bisa jadi salinan kedua yang basi), membandingkan
-# kesembilan pin (delapan sampai revisi ke-117) dengan upstream, lalu menulis satu
+# kedelapan pin (juga delapan sampai revisi ke-117) dengan upstream, lalu menulis satu
 # issue berisi tabel + vonis per komponen. Naik-turun pin tetap keputusan
 # pemilik.
 #
@@ -204,7 +204,6 @@ jobs:
           ^NOMOUNT_LOADER_PIN=[0-9a-f]{40};maxsteeel/nomount;master;^kernel/setup\.sh;NoMount loader
           ^CLANG_PIN=[0-9a-f]{40};kdrag0n/proton-clang;master;.;proton-clang
           ^AK3_PIN=[0-9a-f]{40};vlxlxlv/AnyKernel3;mt6781;^(tools/|META-INF/|ramdisk/);AnyKernel3
-          ^FGETPRIORITY_PIN=[0-9a-f]{40};aerath-stuff/fgetpriority;master;^kernel/;fgetpriority
           '
 
           TABEL=/tmp/tabel.md

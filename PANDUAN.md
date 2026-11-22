@@ -1,8 +1,8 @@
 # Panduan dlagia/rosemary
 
 Kernel Xiaomi rosemary (Redmi Note 10S, MT6785, Linux 4.14) dengan
-xxKSU (backslashxx/KernelSU) + SUSFS v2.4.0 ala Najip + NoMount +
-fgetpriority (cabang uji `susfs-najip`), dibangun otomatis
+xxKSU (backslashxx/KernelSU) + SUSFS v2.4.0 ala Najip + NoMount
+(cabang uji `susfs-najip`), dibangun otomatis
 oleh GitHub Actions. `uname -r` = `4.14.186-perf`, sama dengan kernel stok
 (step "Samakan SUBLEVEL dengan versi stok").
 Panduan ini ditulis supaya semua pekerjaan rutin bisa dikerjakan sendiri,
@@ -34,7 +34,6 @@ Komponen yang di-pin:
 | `NOMOUNT_PIN` | maxsteeel/nomount | dev |
 | `NOMOUNT_LOADER_PIN` | maxsteeel/nomount | master |
 | `AK3_PIN` | vlxlxlv/AnyKernel3 | mt6781 |
-| `FGETPRIORITY_PIN` | aerath-stuff/fgetpriority | master |
 | `CLANG_PIN` | kdrag0n/proton-clang | master |
 
 SUSFS aktif lewat patch 4.14 JackA1ltman + glue parent-kernel di atas xxKSU,
@@ -43,8 +42,8 @@ KernelSU diambil dari patch `0002-susfs-lifecycle-calls.patch` milik Najip.
 Penandaan `TIF_PROC_UMOUNTED` (dipakai `SUS_MOUNT`, `SUS_MAP`,
 `OPEN_REDIRECT`, `SUS_KSTAT`, `SUS_PATH_LOOP`) tetap jalan pada aplikasi
 non-root turunan zygote walau `kernel_umount` mati atau hanya memakai
-NoMount. `CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER` sengaja mati karena
-fgetpriority sudah menyaring getpriority/ioprio; `ENABLE_LOG` juga mati.
+NoMount. Opsi SUSFS mengikuti JackA1ltman: 11 opsi `=y`, termasuk
+`PRIORITY_UID_FILTER` (pengganti fgetpriority, yang dicabut) dan `ENABLE_LOG`.
 
 Rilis dari cabang ini selalu *prerelease* dan tidak pernah jadi "Latest",
 jadi gerbang build `main` dan tombol "Tandai terbukti boot" tidak terganggu.
@@ -154,7 +153,7 @@ klik step yang bertanda X:
 - **Clone / fetch gagal, `not our ref`, `couldn't find remote ref`**: commit
   hilang di upstream (lihat "Upstream hilang"), atau GitHub sedang gangguan
   (tekan *Re-run jobs*).
-- **Assert / `ERROR: ...` di step integrasi (xxKSU, SUSFS, NoMount, fgetpriority, SUBLEVEL)**: upstream
+- **Assert / `ERROR: ...` di step integrasi (xxKSU, SUSFS, NoMount, SUBLEVEL)**: upstream
   mengubah bentuk kode yang ditambal workflow ini. Paling aman:
   **Kembali ke titik**, lalu tunggu upstream stabil, atau naikkan komponen
   lain dulu.
