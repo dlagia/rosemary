@@ -1675,6 +1675,27 @@
 #     disimpan.
 # (d) Delapan pin = HEAD upstream, tanpa ORPHAN. Mundur: rilis
 #     build-20261122-115328 (rosemary-7) atau titik-20261122-105230.
+#
+# CABANG UJI-SEPOLICY-TIMING (2026-11-23, Antigravity) - perbaikan timing A-B
+# SELinux (Duck Detector `ksu_types timing with invalid types` pada
+# `/sys/fs/selinux/context` dan `/proc/self/attr/current`, PR #451/#452):
+# - Alih-alih memotong jalur `SEL_CONTEXT` lebih awal dengan `pr_info` +
+#   `do_useless_alloc()` atau menolak sesudah `security_context_to_sid()`
+#   selesai (yang menimbulkan selisih +3384 ns pada MT6785), penyaringan
+#   tipe tersembunyi dipindah langsung ke `security/selinux/ss/services.c`
+#   (`string_to_context_struct()`) melalui bit `type_datum.ksu_hidden`
+#   (memakai 1 byte padding struct, ukuran tetap 12 B).
+# - Hanya tipe non-atribut baru yang dibuat `add_type()` di `sepolicy.c`
+#   (`ksu`, `ksu_file`, tipe modul baru) yang ditandai `ksu_hidden = 1`;
+#   tipe stok, jalur `force=1` (`inode_doinit_with_dentry`, `CAP_MAC_ADMIN`),
+#   `convert_context()`, dan proses non-app (`uid < 10000` atau tanpa
+#   `TIF_SECCOMP`) tidak tersentuh.
+# - `sh_simple_transaction_get` dan fallback `ksu_selinux_transaction_write`
+#   kini hanya menyaring rule `SEL_ACCESS` (`ksu_should_destroy_access_rule`,
+#   `pr_info_ratelimited`, tanpa `do_useless_alloc`); hook LSM `setprocattr`
+#   dan `inode_setxattr` dikembalikan ke fungsi stok tanpa binary branch
+#   patch ke `sh_security_context_to_sid*`. Status toggle `selinux_hide`
+#   disinkronkan lewat `xxksu_selinux_hide_enabled` (tersembunyi di kallsyms).
 # ============================================================
 
 name: Build Kernel Rosemary (xxKSU + SUSFS + NoMount)
@@ -2685,6 +2706,8 @@ jobs:
           void xxksu_parent_finish_umount(void);
           void xxksu_parent_post_fs_data(void);
           void xxksu_parent_packages_changed(void);
+          extern bool xxksu_selinux_hide_enabled;
+          void xxksu_parent_set_selinux_hide(bool enable);
           bool susfs_is_current_ksu_domain(void);
           void susfs_cache_selinux_sids(void);
           int susfs_ksu_handle_cmd(unsigned int cmd, void __user **arg);
@@ -2892,6 +2915,8 @@ jobs:
           /*
            * Lifecycle bridge callbacks invoked from xxKSU.
            */
+          #include <linux/cache.h>
+          #include <linux/compiler.h>
           #include <linux/sched.h>
           #include <linux/thread_info.h>
           #include <linux/workqueue.h>
@@ -2901,6 +2926,13 @@ jobs:
 
           extern struct work_struct susfs_extra_works;
           extern void susfs_cache_selinux_sids(void);
+
+          bool xxksu_selinux_hide_enabled __read_mostly = true;
+
+          void xxksu_parent_set_selinux_hide(bool enable)
+          {
+          	WRITE_ONCE(xxksu_selinux_hide_enabled, enable);
+          }
 
           void xxksu_parent_reset_task(void)
           {
@@ -3012,6 +3044,457 @@ jobs:
                 '\t\t\tsusfs_starts_with(iter->name, "susfs_") ||\n',
                 "kernel/kallsyms.c -> sembunyikan simbol xxksu_*")
           WIRE_SUSFS_GLUE_PY
+
+          # ---- Perbaikan timing A-B SELinux (filter tipe KSU native di services.c) ----
+          python3 - <<'SEPOLICY_TIMING_FIX_PY'
+          import sys
+
+          def patch_exact(path, old, new, label):
+              with open(path, encoding="utf-8", errors="surrogateescape", newline="") as f:
+                  s = f.read()
+              eol = "\r\n" if "\r\n" in s else "\n"
+              old_e = old.replace("\n", eol)
+              new_e = new.replace("\n", eol)
+              if new_e in s:
+                  print(f"[=] {label}: sudah terpasang")
+                  return
+              n = s.count(old_e)
+              if n != 1:
+                  sys.exit(f"ERROR: {label}: anchor di {path} cocok {n}x (harus 1)")
+              with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+                  f.write(s.replace(old_e, new_e, 1))
+              print(f"[+] {label}")
+
+          # 1. security/selinux/ss/policydb.h: 1 byte flag pada padding struct type_datum (tetap 12 B)
+          patch_exact(
+              "security/selinux/ss/policydb.h",
+              "\tunsigned char primary;\t/* primary name? */\n"
+              "\tunsigned char attribute;/* attribute ?*/\n"
+              "};\n",
+              "\tunsigned char primary;\t/* primary name? */\n"
+              "\tunsigned char attribute;/* attribute ?*/\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\tunsigned char ksu_hidden;\n"
+              "#endif\n"
+              "};\n",
+              "policydb.h -> type_datum.ksu_hidden",
+          )
+
+          # 2. security/selinux/ss/services.c: cek tipe tersembunyi di titik identik tipe invalid
+          patch_exact(
+              "security/selinux/ss/services.c",
+              "#include <net/netlabel.h>\n",
+              "#include <net/netlabel.h>\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "#include <linux/cred.h>\n"
+              "#include <linux/thread_info.h>\n"
+              "#include <linux/uidgid.h>\n"
+              "#include <linux/xxksu_parent_bridge.h>\n"
+              "#endif\n",
+              "services.c -> include xxksu_parent_bridge.h",
+          )
+
+          patch_exact(
+              "security/selinux/ss/services.c",
+              "static int string_to_context_struct(struct policydb *pol,\n"
+              "\t\t\t\t    struct sidtab *sidtabp,\n"
+              "\t\t\t\t    char *scontext,\n"
+              "\t\t\t\t    struct context *ctx,\n"
+              "\t\t\t\t    u32 def_sid)\n",
+              "static int string_to_context_struct(struct policydb *pol,\n"
+              "\t\t\t\t    struct sidtab *sidtabp,\n"
+              "\t\t\t\t    char *scontext,\n"
+              "\t\t\t\t    struct context *ctx,\n"
+              "\t\t\t\t    u32 def_sid\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\t\t\t\t    , bool hide_ksu_types\n"
+              "#endif\n"
+              "\t\t\t\t    )\n",
+              "services.c -> signature string_to_context_struct",
+          )
+
+          patch_exact(
+              "security/selinux/ss/services.c",
+              "\ttypdatum = hashtab_search(pol->p_types.table, scontextp);\n"
+              "\tif (!typdatum || typdatum->attribute)\n"
+              "\t\tgoto out;\n",
+              "\ttypdatum = hashtab_search(pol->p_types.table, scontextp);\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\tif (!typdatum || typdatum->attribute ||\n"
+              "\t    (hide_ksu_types && typdatum->ksu_hidden))\n"
+              "\t\tgoto out;\n"
+              "#else\n"
+              "\tif (!typdatum || typdatum->attribute)\n"
+              "\t\tgoto out;\n"
+              "#endif\n",
+              "services.c -> tolak tipe ksu_hidden di string_to_context_struct",
+          )
+
+          patch_exact(
+              "security/selinux/ss/services.c",
+              "\tstruct context context;\n"
+              "\tint rc = 0;\n",
+              "\tstruct context context;\n"
+              "\tint rc = 0;\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\tbool hide_ksu_types;\n"
+              "#endif\n",
+              "services.c -> deklarasi hide_ksu_types (C89)",
+          )
+
+          patch_exact(
+              "security/selinux/ss/services.c",
+              "\tread_lock(&state->ss->policy_rwlock);\n"
+              "\tpolicydb = &state->ss->policydb;\n"
+              "\tsidtab = state->ss->sidtab;\n"
+              "\trc = string_to_context_struct(policydb, sidtab, scontext2,\n"
+              "\t\t\t\t      &context, def_sid);\n",
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\thide_ksu_types = !force &&\n"
+              "\t\t\t READ_ONCE(xxksu_selinux_hide_enabled) &&\n"
+              "\t\t\t from_kuid(&init_user_ns, current_uid()) >= 10000U &&\n"
+              "\t\t\t test_thread_flag(TIF_SECCOMP);\n"
+              "#endif\n"
+              "\tread_lock(&state->ss->policy_rwlock);\n"
+              "\tpolicydb = &state->ss->policydb;\n"
+              "\tsidtab = state->ss->sidtab;\n"
+              "\trc = string_to_context_struct(policydb, sidtab, scontext2,\n"
+              "\t\t\t\t      &context, def_sid\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\t\t\t\t      , hide_ksu_types\n"
+              "#endif\n"
+              "\t\t\t\t      );\n",
+              "services.c -> teruskan hide_ksu_types di security_context_to_sid_core",
+          )
+
+          patch_exact(
+              "security/selinux/ss/services.c",
+              "\t\trc = string_to_context_struct(args->newp, NULL, s,\n"
+              "\t\t\t\t\t      newc, SECSID_NULL);\n",
+              "\t\trc = string_to_context_struct(args->newp, NULL, s,\n"
+              "\t\t\t\t\t      newc, SECSID_NULL\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\t\t\t\t\t      , false\n"
+              "#endif\n"
+              "\t\t\t\t\t      );\n",
+              "services.c -> convert_context tetap hide_ksu_types=false",
+          )
+
+          # 3. KernelSU/kernel/selinux/sepolicy.c: tandai hanya tipe non-atribut baru
+          patch_exact(
+              "KernelSU/kernel/selinux/sepolicy.c",
+              "\ttype->primary = 1;\n"
+              "\ttype->value = value;\n"
+              "\ttype->attribute = attr;\n",
+              "\ttype->primary = 1;\n"
+              "\ttype->value = value;\n"
+              "\ttype->attribute = attr;\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\ttype->ksu_hidden = !attr;\n"
+              "#endif\n",
+              "sepolicy.c -> tandai tipe baru add_type() sebagai ksu_hidden",
+          )
+
+          # 4. KernelSU/kernel/feature/selinux_hide.h: ganti filter SEL_ACCESS khusus rule
+          patch_exact(
+              "KernelSU/kernel/feature/selinux_hide.h",
+              "static bool ksu_should_destroy_context(char *str, size_t limit)\n",
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "static bool ksu_should_destroy_access_rule(const char *str, size_t limit)\n"
+              "{\n"
+              "\tif (!str)\n"
+              "\t\treturn false;\n"
+              "\n"
+              "\tconst char *str2 = strnchr(str, limit, ' ');\n"
+              "\tif (!str2)\n"
+              "\t\treturn false;\n"
+              "\n"
+              "{\n"
+              "\tstruct ksu_hide_buf *rule_buf __cleanup(ksu_selinux_hide_put_buf) = ksu_selinux_hide_get_buf(&ksu_hide_rule_list);\n"
+              "\tif (unlikely(!rule_buf))\n"
+              "\t\treturn false;\n"
+              "\n"
+              "\tsize_t offset = 0;\n"
+              "\twhile (rule_buf->len > offset) {\n"
+              "\t\tconst char *src_rule = rule_buf->data + offset;\n"
+              "\t\tsize_t src_sz = strlen(src_rule) + 1;\n"
+              "\n"
+              "\t\tconst char *tgt_rule = src_rule + src_sz;\n"
+              "\t\tsize_t tgt_sz = strlen(tgt_rule) + 1;\n"
+              "\n"
+              "\t\tif (strnstr(str, src_rule, str2 - str) && strnstr(str2, tgt_rule, limit - (str2 - str)))\n"
+              "\t\t\treturn true;\n"
+              "\n"
+              "\t\toffset = offset + src_sz + tgt_sz;\n"
+              "\t}\n"
+              "}\n"
+              "\treturn false;\n"
+              "}\n"
+              "#else\n"
+              "static bool ksu_should_destroy_context(char *str, size_t limit)\n",
+              "selinux_hide.h -> tambah ksu_should_destroy_access_rule",
+          )
+
+          patch_exact(
+              "KernelSU/kernel/feature/selinux_hide.h",
+              "\tmemset_explicit(stack, s[1], n);\n"
+              "}\n"
+              "\n"
+              "#endif\n",
+              "\tmemset_explicit(stack, s[1], n);\n"
+              "}\n"
+              "#endif /* CONFIG_KSU_SUSFS */\n"
+              "\n"
+              "#endif\n",
+              "selinux_hide.h -> tutup guard CONFIG_KSU_SUSFS",
+          )
+
+          # 5. KernelSU/kernel/feature/selinux_hide_arm64.c: lepas potongan SEL_CONTEXT & context_to_sid
+          patch_exact(
+              "KernelSU/kernel/feature/selinux_hide_arm64.c",
+              "\tino_t ino = file_inode(file)->i_ino;\n"
+              "\tif (ino != SEL_CONTEXT && ino != SEL_ACCESS)\n"
+              "\t\tgoto skip_destroy;\n"
+              "\n"
+              "\t// two cachelines\n"
+              "\tchar kbuf[128];\n"
+              "\tsize_t len = (size < 128) ? size : 127;\n"
+              "\n"
+              "\tif (!!copy_from_user(kbuf, buf, len))\n"
+              "\t\tgoto skip_destroy;\n"
+              "\n"
+              "\tkbuf[len] = '\\0';\n"
+              "\tif (ksu_should_destroy_context(kbuf, len)) {\n"
+              "\t\tpr_info(\"selinux_hide: simple_transaction_get: destroy: %s \\n\", kbuf);\n"
+              "\t\t// buf = (const char __user *)current->mm->start_stack;\n"
+              "\t\t// context: https://github.com/eltavine/Duck-Detector-Refactoring/pull/451\n"
+              "\t\t// it used to be that we make everyone go and proceed, now it might be too fast ;)\n"
+              "\t\tdo_useless_alloc();\n"
+              "\t\treturn -EINVAL;\n"
+              "\t}\n",
+              "\tino_t ino = file_inode(file)->i_ino;\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\tif (ino != SEL_ACCESS)\n"
+              "\t\tgoto skip_destroy;\n"
+              "\n"
+              "\tchar kbuf[128];\n"
+              "\tsize_t len = (size < 128) ? size : 127;\n"
+              "\n"
+              "\tif (!!copy_from_user(kbuf, buf, len))\n"
+              "\t\tgoto skip_destroy;\n"
+              "\n"
+              "\tkbuf[len] = '\\0';\n"
+              "\tif (ksu_should_destroy_access_rule(kbuf, len)) {\n"
+              "\t\tpr_info_ratelimited(\"selinux_hide: simple_transaction_get: destroy rule: %s \\n\", kbuf);\n"
+              "\t\treturn ERR_PTR(-EINVAL);\n"
+              "\t}\n"
+              "#else\n"
+              "\tif (ino != SEL_CONTEXT && ino != SEL_ACCESS)\n"
+              "\t\tgoto skip_destroy;\n"
+              "\n"
+              "\t// two cachelines\n"
+              "\tchar kbuf[128];\n"
+              "\tsize_t len = (size < 128) ? size : 127;\n"
+              "\n"
+              "\tif (!!copy_from_user(kbuf, buf, len))\n"
+              "\t\tgoto skip_destroy;\n"
+              "\n"
+              "\tkbuf[len] = '\\0';\n"
+              "\tif (ksu_should_destroy_context(kbuf, len)) {\n"
+              "\t\tpr_info(\"selinux_hide: simple_transaction_get: destroy: %s \\n\", kbuf);\n"
+              "\t\t// buf = (const char __user *)current->mm->start_stack;\n"
+              "\t\t// context: https://github.com/eltavine/Duck-Detector-Refactoring/pull/451\n"
+              "\t\t// it used to be that we make everyone go and proceed, now it might be too fast ;)\n"
+              "\t\tdo_useless_alloc();\n"
+              "\t\treturn -EINVAL;\n"
+              "\t}\n"
+              "#endif\n",
+              "selinux_hide_arm64.c -> sh_simple_transaction_get khusus rule SEL_ACCESS",
+          )
+
+          patch_exact(
+              "KernelSU/kernel/feature/selinux_hide_arm64.c",
+              "static void *security_context_to_sid_core_fn __read_mostly = nullptr;\n",
+              "#ifndef CONFIG_KSU_SUSFS\n"
+              "static void *security_context_to_sid_core_fn __read_mostly = nullptr;\n",
+              "selinux_hide_arm64.c -> bungkus wrapper sh_security_context_to_sid*",
+          )
+
+          patch_exact(
+              "KernelSU/kernel/feature/selinux_hide_arm64.c",
+              "static inline int patch_branch_context_to_sid(void)\n"
+              "{\n"
+              "\tpatch_branch_context_to_sid_inode_setxattr();\n"
+              "\tpatch_branch_context_to_sid_procattr();\n"
+              "\treturn 0;\n"
+              "}\n",
+              "#endif /* !CONFIG_KSU_SUSFS */\n"
+              "\n"
+              "static inline int patch_branch_context_to_sid(void)\n"
+              "{\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\tpr_info(\"selinux_hide: context_to_sid hiding active natively in SELinux services\\n\");\n"
+              "\tksu_decide_inode_setxattr(true);\n"
+              "\tksu_decide_setprocattr(true);\n"
+              "#else\n"
+              "\tpatch_branch_context_to_sid_inode_setxattr();\n"
+              "\tpatch_branch_context_to_sid_procattr();\n"
+              "#endif\n"
+              "\treturn 0;\n"
+              "}\n",
+              "selinux_hide_arm64.c -> pulihkan LSM setprocattr/inode_setxattr tanpa patch cabang",
+          )
+
+          # 6. KernelSU/kernel/feature/selinux_hide.c: nonaktifkan inline LSM & sinkronkan flag
+          patch_exact(
+              "KernelSU/kernel/feature/selinux_hide.c",
+              "static __always_inline int ksu_hide_setprocattr_inline(const char *name, void *value, size_t size)\n"
+              "{\n"
+              "\tif (unlikely(!ksu_selinux_hide_enabled))\n",
+              "static __always_inline int ksu_hide_setprocattr_inline(const char *name, void *value, size_t size)\n"
+              "{\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\treturn 0;\n"
+              "#else\n"
+              "\tif (unlikely(!ksu_selinux_hide_enabled))\n",
+              "selinux_hide.c -> nonaktifkan ksu_hide_setprocattr_inline",
+          )
+
+          patch_exact(
+              "KernelSU/kernel/feature/selinux_hide.c",
+              "\tpr_info(\"selinux_hide: setprocattr: destroy: %.*s\\n\", size, str);\n"
+              "\tstr[1] = ';';\n"
+              "\n"
+              "\treturn 0;\n"
+              "}\n",
+              "\tpr_info(\"selinux_hide: setprocattr: destroy: %.*s\\n\", size, str);\n"
+              "\tstr[1] = ';';\n"
+              "\n"
+              "\treturn 0;\n"
+              "#endif\n"
+              "}\n",
+              "selinux_hide.c -> tutup guard ksu_hide_setprocattr_inline",
+          )
+
+          patch_exact(
+              "KernelSU/kernel/feature/selinux_hide.c",
+              "static __always_inline int ksu_hide_setxattr_inline(const char *name, void *value, size_t size)\n"
+              "{\n"
+              "\tif (unlikely(!ksu_selinux_hide_enabled))\n",
+              "static __always_inline int ksu_hide_setxattr_inline(const char *name, void *value, size_t size)\n"
+              "{\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\treturn 0;\n"
+              "#else\n"
+              "\tif (unlikely(!ksu_selinux_hide_enabled))\n",
+              "selinux_hide.c -> nonaktifkan ksu_hide_setxattr_inline",
+          )
+
+          patch_exact(
+              "KernelSU/kernel/feature/selinux_hide.c",
+              "\tpr_info(\"selinux_hide: inode_setxattr: destroy: %.*s\\n\", size, str);\n"
+              "\tstr[1] = ';';\n"
+              "\n"
+              "\treturn 0;\n"
+              "}\n",
+              "\tpr_info(\"selinux_hide: inode_setxattr: destroy: %.*s\\n\", size, str);\n"
+              "\tstr[1] = ';';\n"
+              "\n"
+              "\treturn 0;\n"
+              "#endif\n"
+              "}\n",
+              "selinux_hide.c -> tutup guard ksu_hide_setxattr_inline",
+          )
+
+          patch_exact(
+              "KernelSU/kernel/feature/selinux_hide.c",
+              "\tino_t ino = file_inode(file)->i_ino;\n"
+              "\tif (ino != SEL_CONTEXT && ino != SEL_ACCESS)\n"
+              "\t\tgoto skip_destroy;\n"
+              "\n"
+              "\t// two cachelines\n"
+              "\tchar kbuf[128];\n"
+              "\tsize_t len = (size < 128) ? size : 127;\n"
+              "\n"
+              "\tif (!!copy_from_user(kbuf, buf, len))\n"
+              "\t\tgoto skip_destroy;\n"
+              "\n"
+              "\tkbuf[len] = '\\0';\n"
+              "\tif (ksu_should_destroy_context(kbuf, len)) {\n"
+              "\t\tpr_info(\"selinux_hide: selinux_transaction_write: destroy: %s \\n\", kbuf);\n"
+              "\t\t// buf = (const char __user *)current->mm->start_stack;\n"
+              "\t\t// context: https://github.com/eltavine/Duck-Detector-Refactoring/pull/451\n"
+              "\t\tdo_useless_alloc();\n"
+              "\t\treturn -EINVAL;\n"
+              "\t}\n",
+              "\tino_t ino = file_inode(file)->i_ino;\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\tif (ino != SEL_ACCESS)\n"
+              "\t\tgoto skip_destroy;\n"
+              "\n"
+              "\tchar kbuf[128];\n"
+              "\tsize_t len = (size < 128) ? size : 127;\n"
+              "\n"
+              "\tif (!!copy_from_user(kbuf, buf, len))\n"
+              "\t\tgoto skip_destroy;\n"
+              "\n"
+              "\tkbuf[len] = '\\0';\n"
+              "\tif (ksu_should_destroy_access_rule(kbuf, len)) {\n"
+              "\t\tpr_info_ratelimited(\"selinux_hide: selinux_transaction_write: destroy rule: %s \\n\", kbuf);\n"
+              "\t\treturn -EINVAL;\n"
+              "\t}\n"
+              "#else\n"
+              "\tif (ino != SEL_CONTEXT && ino != SEL_ACCESS)\n"
+              "\t\tgoto skip_destroy;\n"
+              "\n"
+              "\t// two cachelines\n"
+              "\tchar kbuf[128];\n"
+              "\tsize_t len = (size < 128) ? size : 127;\n"
+              "\n"
+              "\tif (!!copy_from_user(kbuf, buf, len))\n"
+              "\t\tgoto skip_destroy;\n"
+              "\n"
+              "\tkbuf[len] = '\\0';\n"
+              "\tif (ksu_should_destroy_context(kbuf, len)) {\n"
+              "\t\tpr_info(\"selinux_hide: selinux_transaction_write: destroy: %s \\n\", kbuf);\n"
+              "\t\t// buf = (const char __user *)current->mm->start_stack;\n"
+              "\t\t// context: https://github.com/eltavine/Duck-Detector-Refactoring/pull/451\n"
+              "\t\tdo_useless_alloc();\n"
+              "\t\treturn -EINVAL;\n"
+              "\t}\n"
+              "#endif\n",
+              "selinux_hide.c -> fallback transaction_write khusus rule SEL_ACCESS",
+          )
+
+          patch_exact(
+              "KernelSU/kernel/feature/selinux_hide.c",
+              "\tif (enable)\n"
+              "\t\tksu_selinux_hide_enabled = true;\n"
+              "\telse\n"
+              "\t\tksu_selinux_hide_enabled = false;\n",
+              "\tif (enable)\n"
+              "\t\tksu_selinux_hide_enabled = true;\n"
+              "\telse\n"
+              "\t\tksu_selinux_hide_enabled = false;\n"
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\txxksu_parent_set_selinux_hide(enable);\n"
+              "#endif\n",
+              "selinux_hide.c -> sinkronkan xxksu_selinux_hide_enabled",
+          )
+
+          for _p in (
+              "security/selinux/ss/policydb.h",
+              "security/selinux/ss/services.c",
+              "KernelSU/kernel/selinux/sepolicy.c",
+              "KernelSU/kernel/feature/selinux_hide.h",
+              "KernelSU/kernel/feature/selinux_hide_arm64.c",
+              "KernelSU/kernel/feature/selinux_hide.c",
+          ):
+              _t = open(_p, encoding="utf-8", errors="surrogateescape").read()
+              if _t.count("{") != _t.count("}"):
+                  sys.exit(f"ERROR: {_p} brace tidak seimbang")
+          print("OK: perbaikan timing A-B SELinux terpasang dan diverifikasi (6 berkas)")
+          SEPOLICY_TIMING_FIX_PY
 
           # Verifikasi akhir integrasi SUSFS + glue
           grep -q 'CFLAGS_susfs.o += -DSUSFS_KERNEL_READ_NEW' fs/Makefile || {
