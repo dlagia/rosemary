@@ -94,7 +94,7 @@ jobs:
             'source kernel')         BARIS='KERNEL_PIN;dlagia/android_kernel_xiaomi_rosemary;rosemary-13;.' ;;
             # Revisi ke-118: BakaSU -> xxKSU; Build-Kernel_scripts dicabut.
             # Cabang susfs-najip: SUSFS kembali (patch 4.14 Jack) + lifecycle Najip.
-            'xxKSU')                 BARIS='KSU_PIN;backslashxx/KernelSU;master;^kernel/' ;;
+            'xxKSU')                 BARIS='KSU_PIN;dlagia/backupxksu;final;^kernel/' ;;
             'SUSFS')                 BARIS='SUSFS_PIN;JackA1ltman/NonGKI_Kernel_Build_2nd;mainline;^Patches/Patch/susfs_patch_to_4\.14\.patch$' ;;
             'Najip lifecycle')       BARIS='NAJIP_PIN;Najip/KernelSU_SUSFS_Samsung_SM-A325X;main;^patches/kernelsu/0002-susfs-lifecycle-calls\.patch$' ;;
             'NoMount driver')        BARIS='NOMOUNT_PIN;maxsteeel/nomount;dev;^(kernel/src/|userspace/src/)' ;;

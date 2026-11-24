@@ -2,7 +2,7 @@
 
 Kernel Xiaomi rosemary (Redmi Note 10S, MT6785, Linux 4.14.357 LTS hasil
 merge OpenELA kernel-lts ke source vendor) dengan
-xxKSU (backslashxx/KernelSU) + SUSFS v2.4.0 ala Najip + NoMount,
+xxKSU (dlagia/backupxksu) + SUSFS v2.4.0 ala Najip + NoMount,
 dibangun otomatis
 oleh GitHub Actions. `uname -r` = `4.14.186-perf`, sama dengan kernel stok
 (step "Samakan SUBLEVEL dengan versi stok").
@@ -16,7 +16,7 @@ Semua tombol ada di tab **Actions**. Pilih workflow di kiri, tekan
 
 | berkas | gunanya |
 |---|---|
-| `pins.env` | 7 baris `NAMA_PIN=<SHA 40 huruf>`: versi persis tiap komponen. Ini satu-satunya yang biasanya diubah. |
+| `pins.env` | 8 baris `NAMA_PIN=<SHA 40 huruf>`: versi persis tiap komponen. Ini satu-satunya yang biasanya diubah. |
 | `.github/workflows/build-kernel-ksu-v2.yml` | resep build kernel |
 | `.github/workflows/pin-watch.yml` | robot pemantau upstream (tiap hari) |
 | `.github/workflows/naikkan-pin.yml` | tombol menaikkan pin |
@@ -29,7 +29,7 @@ Komponen yang di-pin:
 | pin | repo upstream | branch |
 |---|---|---|
 | `KERNEL_PIN` | dlagia/android_kernel_xiaomi_rosemary | rosemary-13 |
-| `KSU_PIN` | backslashxx/KernelSU (xxKSU) | master |
+| `KSU_PIN` | dlagia/backupxksu (xxKSU) | final |
 | `SUSFS_PIN` | JackA1ltman/NonGKI_Kernel_Build_2nd (SUSFS 4.14) | mainline |
 | `NAJIP_PIN` | Najip/KernelSU_SUSFS_Samsung_SM-A325X (lifecycle 0002) | main |
 | `NOMOUNT_PIN` | maxsteeel/nomount | dev |
@@ -53,11 +53,12 @@ terbukti boot" tidak terganggu.
 
 ## Manager
 
-Pasang APK manager dari halaman rilis
-[backslashxx/KernelSU](https://github.com/backslashxx/KernelSU/releases)
-(paket `me.weishu.kernelsu`). Manager BakaSU atau KernelSU resmi tidak
-dikenali kernel ini. Pasang APK-nya SEBELUM flash zip pertama dari repo ini,
-supaya sesudah boot manager langsung jalan.
+Pasang APK manager `arm64-v8a` non-GKI dari halaman rilis
+[dlagia/backupxksu](https://github.com/dlagia/backupxksu/releases)
+(paket `me.weishu.kernelsu`, ditandatangani v2-only `0x363` / `4359c171...`,
+UAPI v6, sinkron penuh dengan kernel ini). Manager BakaSU tidak dikenali
+kernel ini. Pasang APK-nya SEBELUM flash zip pertama dari repo ini, supaya
+sesudah boot manager langsung jalan.
 
 ## Istilah
 
@@ -151,7 +152,7 @@ HP tidak lewat logo, atau restart terus:
 Tidak ada rilis yang terbit, jadi HP tidak terancam. Buka run yang merah,
 klik step yang bertanda X:
 
-- **Muat pins.env**: format pins.env rusak. Harus 7 baris
+- **Muat pins.env**: format pins.env rusak. Harus 8 baris
   `NAMA_PIN=<40 huruf 0-9a-f>`, tanpa spasi.
 - **Clone / fetch gagal, `not our ref`, `couldn't find remote ref`**: commit
   hilang di upstream (lihat "Upstream hilang"), atau GitHub sedang gangguan
@@ -187,7 +188,7 @@ Kalau upstream sebuah komponen hilang:
      ```
      git clone ksu-<sha>.bundle KernelSU
      cd KernelSU
-     git push https://github.com/dlagia/KernelSU.git pin:master
+     git push https://github.com/dlagia/backupxksu.git pin:final
      ```
    - Komponen lain (`*.tar.gz`): ekstrak, `git init`, `git add -A`,
      `git commit`, push. SHA-nya akan baru; pakai SHA baru itu di pins.env.
@@ -211,7 +212,7 @@ git push
 ```
 
 - Push yang mengubah `pins.env` atau workflow build memicu build otomatis.
-  Gerbang build melewati build kalau 7 SHA dan workflow-nya sama persis
+  Gerbang build melewati build kalau 8 SHA dan workflow-nya sama persis
   dengan rilis terakhir.
 - Mengubah pin dengan tangan: ganti SHA di baris `NAMA_PIN=` dengan SHA
   40 huruf dari halaman commit upstream. Tombol **Naikkan pin** melakukan

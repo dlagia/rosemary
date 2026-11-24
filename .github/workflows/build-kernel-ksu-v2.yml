@@ -2,7 +2,7 @@
 # Workflow GitHub Actions: Build Kernel Xiaomi Rosemary (kernel 4.14)
 # Sejak revisi rosemary-7 (2026-11-22): source kernel Linux 4.14.357 (merge
 # OpenELA kernel-lts ke rosemary-13; uname tetap 4.14.186-perf) dengan
-# xxKSU (backslashxx/KernelSU) + SUSFS
+# xxKSU (dlagia/backupxksu, branch final) + SUSFS
 # v2.4.0 ala Najip (patch 4.14 JackA1ltman + glue parent-kernel + patch
 # lifecycle 0002 Najip, TANPA BakaSU) + NoMount; fgetpriority dicabut,
 # opsi SUSFS mengikuti JackA1ltman (11 opsi =y). Build dari cabang selain
@@ -13,7 +13,7 @@
 # rilis build-20261105-113645, commit 2e3265730).
 #
 # Fitur yang terpasang:
-# 1. xxKSU (backslashxx/KernelSU, branch master) lewat setup.sh resminya,
+# 1. xxKSU (dlagia/backupxksu, branch final) lewat setup.sh resminya,
 #    hook lewat tabel syscall (CONFIG_KSU_TAMPER_SYSCALL_TABLE=y) + LSM,
 #    plus hook lifecycle SUSFS dari patch 0002 Najip (NAJIP_PIN) di
 #    KernelSU/kernel (tanpa hook manual di fs/exec.c, fs/open.c, fs/stat.c,
@@ -1704,6 +1704,33 @@
 # (c) Kedelapan pin tidak berubah; kode C kernel identik dengan
 #     `titik-20261123-145519`. Mundur: `titik-20261123-145519` atau
 #     `titik-20261122-140010` (rosemary-8).
+#
+# REVISI ROSEMARY-10 (2026-11-24, Antigravity) - migrasi xxKSU ke repo mandiri
+# publik `dlagia/backupxksu` (branch `final`, basis HEAD terakhir backslashxx
+# `9a02a5c1e` + pipeline build Manager APK `arm64-v8a` non-GKI), naikkan
+# `NOMOUNT_PIN` PR #131, dan selaraskan seluruh workflow/dokumentasi:
+# (a) `KSU_PIN`: `9a08f36d3` -> `ee8a30263` (`dlagia/backupxksu@final`, tag
+#     `v3.3.1`). Diff `kernel/` antara `9a08f36d3` dan `9a02a5c1e` hanya 3
+#     berkas (`selinux_hide.h/.c/_arm64.c`); 6 berkas target 0002 Najip,
+#     `Makefile` (`KSU_VERSION=32733`), `sepolicy.c`, dan `apk_sign.c` (`0x363`
+#     / `4359c171...` cocok `dummy.keystore`) byte-identik.
+# (b) `SEPOLICY_TIMING_FIX_PY` diselaraskan ke `9a02a5c1e`:
+#     - Mempertahankan penyaringan tipe KSU native di `services.c` sehingga
+#       `kick_all_cpus_sync()`, 3x `do_useless_alloc()`, `replace_after_second_colon()`
+#       (bug `memchr(first)` upstream), dan `return PTR_ERR(data)` di
+#       `sh_simple_transaction_get` dilewati seluruhnya.
+#     - Memperbaiki bug race boot upstream `9a02a5c1e` di
+#       `ksu_selinux_hide_init_thread()` (`if (*(volatile bool *)&ksu_vfs_read_hook)`
+#       -> `while`, selaras `syscall_table_hook_arm64.c` & `lsm_hooks_list.c`).
+# (c) `NOMOUNT_PIN`: `2e696f6da` -> `5f33211ea` (PR #131 `kernel: proxy backing
+#     directory lookups` — menghapus pemanggilan langsung `r_dir->i_op->lookup`
+#     lintas-superblock tanpa kunci `i_rwsem` pada ext4/f2fs; memakai
+#     `lookup_one_len_unlocked()` + proxy inode yang sudah terbukti di 4.14).
+# (d) `NAJIP_PIN=d1c4cca96` tetap ditahan (`# TAHAN` terhadap `315a66fbf`).
+# (e) Koherensi: `gerbang` cek minimal 8 pin (sebelumnya 7), `pin-watch.yml`,
+#     `naikkan-pin.yml`, job `arsip`, `PANDUAN.md`, `README.md`, dan catatan
+#     rilis menunjuk `dlagia/backupxksu` (branch `final` + Manager APK rilis).
+#     Mundur: `titik-20261123-145519` (`bc97aa7`).
 # ============================================================
 
 name: Build Kernel Rosemary (xxKSU + SUSFS + NoMount)
@@ -1862,7 +1889,7 @@ jobs:
                   PIN_LAMA=$(ambil "$SEBELUM")
                   PIN_BARU=$(ambil "$GITHUB_SHA")
                   N_BARU=$(printf '%s\n' "$PIN_BARU" | grep -c . || true)
-                  if [ "${N_BARU:-0}" -lt 7 ]; then
+                  if [ "${N_BARU:-0}" -lt 8 ]; then
                     alasan="pins.env sesudah push cuma terbaca ${N_BARU:-0} baris pin - dibangun, biar step 'Muat pins.env' yang memvonis"
                   elif [ "$PIN_LAMA" = "$PIN_BARU" ]; then
                     lanjut=0
@@ -2073,8 +2100,9 @@ jobs:
           echo "OK: source kernel ter-pin di $KERNEL_PIN"
 
       # Revisi ke-118: BakaSU + SUSFS (dlagia/Build-Kernel_scripts) dicabut,
-      # diganti xxKSU. Alasan dan batasnya di kepala berkas, REVISI KE-118.
-      - name: Integrasikan xxKSU (backslashxx/KernelSU, setup.sh resmi, di-PIN)
+      # diganti xxKSU. Revisi rosemary-10: pindah ke repo mandiri publik
+      # dlagia/backupxksu (branch final) sesudah backslashxx/KernelSU dihapus.
+      - name: Integrasikan xxKSU (dlagia/backupxksu, setup.sh resmi, di-PIN)
         working-directory: kernel
         env:
           GH_TOKEN: ${{ github.token }}
@@ -2110,13 +2138,13 @@ jobs:
           echo "OK: source kernel polos (nol ksu_handle_/CONFIG_KSU/susfs)"
 
           # setup.sh diambil dari commit pin yang sama, bukan dari branch.
-          # Jika upstream backslashxx/KernelSU hilang/404, fallback otomatis ke
+          # Jika repo dlagia/backupxksu tidak terjangkau, fallback otomatis ke
           # bundle riwayat penuh di rilis `arsip-sumber` repo ini.
-          if curl -fLSs "https://raw.githubusercontent.com/backslashxx/KernelSU/${KSU_PIN}/kernel/setup.sh" \
+          if curl -fLSs "https://raw.githubusercontent.com/dlagia/backupxksu/${KSU_PIN}/kernel/setup.sh" \
                -o /tmp/xxksu_setup.sh && \
-             git ls-remote --exit-code "https://github.com/backslashxx/KernelSU.git" HEAD >/dev/null 2>&1; then
-            grep -q 'git clone https://github.com/backslashxx/KernelSU' /tmp/xxksu_setup.sh || {
-              echo "ERROR: setup.sh xxKSU tidak lagi meng-clone backslashxx/KernelSU:"
+             git ls-remote --exit-code "https://github.com/dlagia/backupxksu.git" HEAD >/dev/null 2>&1; then
+            grep -q 'git clone https://github.com/dlagia/backupxksu KernelSU' /tmp/xxksu_setup.sh || {
+              echo "ERROR: setup.sh xxKSU tidak lagi meng-clone dlagia/backupxksu ke KernelSU:"
               grep -n 'git clone' /tmp/xxksu_setup.sh || true
               exit 1
             }
@@ -2124,7 +2152,7 @@ jobs:
             rm -f /tmp/xxksu_setup.sh
           else
             rm -f /tmp/xxksu_setup.sh
-            echo "[!] Upstream backslashxx/KernelSU tidak terjangkau - fallback ke arsip-sumber (ksu-${KSU_PIN:0:12}.bundle)"
+            echo "[!] Repo dlagia/backupxksu tidak terjangkau - fallback ke arsip-sumber (ksu-${KSU_PIN:0:12}.bundle)"
             KSU_BUNDLE="/tmp/ksu-${KSU_PIN:0:12}.bundle"
             gh release download arsip-sumber --repo "$GH_REPO" \
               --pattern "ksu-${KSU_PIN:0:12}.bundle" --dir /tmp --clobber
@@ -2818,7 +2846,7 @@ jobs:
           // SPDX-License-Identifier: GPL-2.0
           /*
            * Parent-kernel glue connecting SUSFS v2.4.0 (JackA1ltman 4.14 patch)
-           * with xxKSU (backslashxx/KernelSU, syscall-table + LSM hook mode).
+           * with xxKSU (dlagia/backupxksu, syscall-table + LSM hook mode).
            */
           #include <linux/cache.h>
           #include <linux/compiler.h>
@@ -3234,7 +3262,7 @@ jobs:
           # 4. KernelSU/kernel/feature/selinux_hide.h: ganti filter SEL_ACCESS khusus rule
           patch_exact(
               "KernelSU/kernel/feature/selinux_hide.h",
-              "static bool ksu_should_destroy_context(char *str, size_t limit)\n",
+              "static __always_inline bool ksu_should_destroy_context(char *str, size_t limit, const bool types_only)\n",
               "#ifdef CONFIG_KSU_SUSFS\n"
               "static bool ksu_should_destroy_access_rule(const char *str, size_t limit)\n"
               "{\n"
@@ -3267,7 +3295,7 @@ jobs:
               "\treturn false;\n"
               "}\n"
               "#else\n"
-              "static bool ksu_should_destroy_context(char *str, size_t limit)\n",
+              "static __always_inline bool ksu_should_destroy_context(char *str, size_t limit, const bool types_only)\n",
               "selinux_hide.h -> tambah ksu_should_destroy_access_rule",
           )
 
@@ -3289,25 +3317,33 @@ jobs:
           patch_exact(
               "KernelSU/kernel/feature/selinux_hide_arm64.c",
               "\tino_t ino = file_inode(file)->i_ino;\n"
-              "\tif (ino != SEL_CONTEXT && ino != SEL_ACCESS)\n"
-              "\t\tgoto skip_destroy;\n"
               "\n"
-              "\t// two cachelines\n"
-              "\tchar kbuf[128];\n"
-              "\tsize_t len = (size < 128) ? size : 127;\n"
+              "\tchar *data = simple_transaction_get(file, buf, size);\n"
+              "\tif (IS_ERR(data))\n"
+              "\t\treturn PTR_ERR(data);\n"
               "\n"
-              "\tif (!!copy_from_user(kbuf, buf, len))\n"
-              "\t\tgoto skip_destroy;\n"
+              "\tif (ino == SEL_CONTEXT && ksu_should_destroy_context(data, size, true)) {\n"
+              "\t\tpr_info_ratelimited(\"selinux_hide: simple_transaction_get: context: destroy: %s \\n\", data);\n"
+              "\t\tdo_useless_alloc(size);\n"
+              "\t\tdo_useless_alloc(size);\n"
+              "\t\tdo_useless_alloc(size);\n"
+              "\t\treturn ERR_PTR(-EINVAL);\n"
               "\n"
-              "\tkbuf[len] = '\\0';\n"
-              "\tif (ksu_should_destroy_context(kbuf, len)) {\n"
-              "\t\tpr_info(\"selinux_hide: simple_transaction_get: destroy: %s \\n\", kbuf);\n"
-              "\t\t// buf = (const char __user *)current->mm->start_stack;\n"
-              "\t\t// context: https://github.com/eltavine/Duck-Detector-Refactoring/pull/451\n"
-              "\t\t// it used to be that we make everyone go and proceed, now it might be too fast ;)\n"
-              "\t\tdo_useless_alloc();\n"
-              "\t\treturn -EINVAL;\n"
-              "\t}\n",
+              "//\t\treplace_after_second_colon(data, size);\n"
+              "//\t\tdo_useless_alloc(size);\n"
+              "\t}\n"
+              "\n"
+              "\tif (ino == SEL_ACCESS && ksu_should_destroy_context(data, size, false)) {\n"
+              "\t\tpr_info(\"selinux_hide: simple_transaction_get: access: destroy: %s \\n\", data);\n"
+              "\t\tdo_useless_alloc(size);\n"
+              "\t\tdo_useless_alloc(size);\n"
+              "\t\tdo_useless_alloc(size);\n"
+              "\t\treturn ERR_PTR(-EINVAL);\n"
+              "\n"
+              "//\t\treplace_after_second_colon(data, size);\n"
+              "//\t\tdo_useless_alloc(size);\n"
+              "\t}\n"
+              "\treturn data;\n",
               "\tino_t ino = file_inode(file)->i_ino;\n"
               "#ifdef CONFIG_KSU_SUSFS\n"
               "\tif (ino != SEL_ACCESS)\n"
@@ -3324,26 +3360,28 @@ jobs:
               "\t\tpr_info_ratelimited(\"selinux_hide: simple_transaction_get: destroy rule: %s \\n\", kbuf);\n"
               "\t\treturn ERR_PTR(-EINVAL);\n"
               "\t}\n"
+              "\tgoto skip_destroy;\n"
               "#else\n"
-              "\tif (ino != SEL_CONTEXT && ino != SEL_ACCESS)\n"
-              "\t\tgoto skip_destroy;\n"
+              "\tchar *data = simple_transaction_get(file, buf, size);\n"
+              "\tif (IS_ERR(data))\n"
+              "\t\treturn data;\n"
               "\n"
-              "\t// two cachelines\n"
-              "\tchar kbuf[128];\n"
-              "\tsize_t len = (size < 128) ? size : 127;\n"
-              "\n"
-              "\tif (!!copy_from_user(kbuf, buf, len))\n"
-              "\t\tgoto skip_destroy;\n"
-              "\n"
-              "\tkbuf[len] = '\\0';\n"
-              "\tif (ksu_should_destroy_context(kbuf, len)) {\n"
-              "\t\tpr_info(\"selinux_hide: simple_transaction_get: destroy: %s \\n\", kbuf);\n"
-              "\t\t// buf = (const char __user *)current->mm->start_stack;\n"
-              "\t\t// context: https://github.com/eltavine/Duck-Detector-Refactoring/pull/451\n"
-              "\t\t// it used to be that we make everyone go and proceed, now it might be too fast ;)\n"
-              "\t\tdo_useless_alloc();\n"
-              "\t\treturn -EINVAL;\n"
+              "\tif (ino == SEL_CONTEXT && ksu_should_destroy_context(data, size, true)) {\n"
+              "\t\tpr_info_ratelimited(\"selinux_hide: simple_transaction_get: context: destroy: %s \\n\", data);\n"
+              "\t\tdo_useless_alloc(size);\n"
+              "\t\tdo_useless_alloc(size);\n"
+              "\t\tdo_useless_alloc(size);\n"
+              "\t\treturn ERR_PTR(-EINVAL);\n"
               "\t}\n"
+              "\n"
+              "\tif (ino == SEL_ACCESS && ksu_should_destroy_context(data, size, false)) {\n"
+              "\t\tpr_info(\"selinux_hide: simple_transaction_get: access: destroy: %s \\n\", data);\n"
+              "\t\tdo_useless_alloc(size);\n"
+              "\t\tdo_useless_alloc(size);\n"
+              "\t\tdo_useless_alloc(size);\n"
+              "\t\treturn ERR_PTR(-EINVAL);\n"
+              "\t}\n"
+              "\treturn data;\n"
               "#endif\n",
               "selinux_hide_arm64.c -> sh_simple_transaction_get khusus rule SEL_ACCESS",
           )
@@ -3381,7 +3419,7 @@ jobs:
               "selinux_hide_arm64.c -> pulihkan LSM setprocattr/inode_setxattr tanpa patch cabang",
           )
 
-          # 6. KernelSU/kernel/feature/selinux_hide.c: nonaktifkan inline LSM & sinkronkan flag
+          # 6. KernelSU/kernel/feature/selinux_hide.c: nonaktifkan inline LSM, perbaiki wait-loop boot, & sinkronkan flag
           patch_exact(
               "KernelSU/kernel/feature/selinux_hide.c",
               "static __always_inline int ksu_hide_setprocattr_inline(const char *name, void *value, size_t size)\n"
@@ -3398,14 +3436,14 @@ jobs:
 
           patch_exact(
               "KernelSU/kernel/feature/selinux_hide.c",
-              "\tpr_info(\"selinux_hide: setprocattr: destroy: %.*s\\n\", size, str);\n"
-              "\tstr[1] = ';';\n"
-              "\n"
+              "\tpr_info_ratelimited(\"selinux_hide: setprocattr: destroy: %.*s\\n\", size, str);\n"
+              "\treplace_after_second_colon((char *)str, size);\n"
+              "\tdo_useless_alloc(size);\n"
               "\treturn 0;\n"
               "}\n",
-              "\tpr_info(\"selinux_hide: setprocattr: destroy: %.*s\\n\", size, str);\n"
-              "\tstr[1] = ';';\n"
-              "\n"
+              "\tpr_info_ratelimited(\"selinux_hide: setprocattr: destroy: %.*s\\n\", size, str);\n"
+              "\treplace_after_second_colon((char *)str, size);\n"
+              "\tdo_useless_alloc(size);\n"
               "\treturn 0;\n"
               "#endif\n"
               "}\n",
@@ -3428,14 +3466,12 @@ jobs:
 
           patch_exact(
               "KernelSU/kernel/feature/selinux_hide.c",
-              "\tpr_info(\"selinux_hide: inode_setxattr: destroy: %.*s\\n\", size, str);\n"
-              "\tstr[1] = ';';\n"
-              "\n"
+              "\tpr_info_ratelimited(\"selinux_hide: inode_setxattr: destroy: %.*s\\n\", size, str);\n"
+              "\treplace_after_second_colon((char *)str, size);\n"
               "\treturn 0;\n"
               "}\n",
-              "\tpr_info(\"selinux_hide: inode_setxattr: destroy: %.*s\\n\", size, str);\n"
-              "\tstr[1] = ';';\n"
-              "\n"
+              "\tpr_info_ratelimited(\"selinux_hide: inode_setxattr: destroy: %.*s\\n\", size, str);\n"
+              "\treplace_after_second_colon((char *)str, size);\n"
               "\treturn 0;\n"
               "#endif\n"
               "}\n",
@@ -3456,11 +3492,10 @@ jobs:
               "\t\tgoto skip_destroy;\n"
               "\n"
               "\tkbuf[len] = '\\0';\n"
-              "\tif (ksu_should_destroy_context(kbuf, len)) {\n"
-              "\t\tpr_info(\"selinux_hide: selinux_transaction_write: destroy: %s \\n\", kbuf);\n"
+              "\tif (ksu_should_destroy_context(kbuf, len, false)) {\n"
+              "\t\tpr_info_ratelimited(\"selinux_hide: selinux_transaction_write: destroy: %s \\n\", kbuf);\n"
               "\t\t// buf = (const char __user *)current->mm->start_stack;\n"
-              "\t\t// context: https://github.com/eltavine/Duck-Detector-Refactoring/pull/451\n"
-              "\t\tdo_useless_alloc();\n"
+              "\t\tdo_useless_alloc(len);\n"
               "\t\treturn -EINVAL;\n"
               "\t}\n",
               "\tino_t ino = file_inode(file)->i_ino;\n"
@@ -3491,15 +3526,28 @@ jobs:
               "\t\tgoto skip_destroy;\n"
               "\n"
               "\tkbuf[len] = '\\0';\n"
-              "\tif (ksu_should_destroy_context(kbuf, len)) {\n"
-              "\t\tpr_info(\"selinux_hide: selinux_transaction_write: destroy: %s \\n\", kbuf);\n"
+              "\tif (ksu_should_destroy_context(kbuf, len, false)) {\n"
+              "\t\tpr_info_ratelimited(\"selinux_hide: selinux_transaction_write: destroy: %s \\n\", kbuf);\n"
               "\t\t// buf = (const char __user *)current->mm->start_stack;\n"
-              "\t\t// context: https://github.com/eltavine/Duck-Detector-Refactoring/pull/451\n"
-              "\t\tdo_useless_alloc();\n"
+              "\t\tdo_useless_alloc(len);\n"
               "\t\treturn -EINVAL;\n"
               "\t}\n"
               "#endif\n",
               "selinux_hide.c -> fallback transaction_write khusus rule SEL_ACCESS",
+          )
+
+          patch_exact(
+              "KernelSU/kernel/feature/selinux_hide.c",
+              "\tif (*(volatile bool *)&ksu_vfs_read_hook)\n"
+              "\t\tmsleep(1000);\n",
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\twhile (*(volatile bool *)&ksu_vfs_read_hook)\n"
+              "\t\tmsleep(1000);\n"
+              "#else\n"
+              "\tif (*(volatile bool *)&ksu_vfs_read_hook)\n"
+              "\t\tmsleep(1000);\n"
+              "#endif\n",
+              "selinux_hide.c -> perbaiki race boot if->while ksu_vfs_read_hook",
           )
 
           patch_exact(
@@ -4593,7 +4641,7 @@ jobs:
           DEF=arch/arm64/configs/rosemary_defconfig
 
           # ----- AUDIT STRUKTUR (revisi ke-118 + cabang susfs-najip) -----
-          # xxKSU (backslashxx/KernelSU) memakai hook tabel syscall + LSM.
+          # xxKSU (dlagia/backupxksu) memakai hook tabel syscall + LSM.
           # SUSFS v2.4.0 (fs/Kconfig.susfs) hidup di parent kernel tanpa
           # mengubah mode hook xxKSU dan tanpa BakaSU. Sebelas opsi =y =
           # daftar JackA1ltman (.github/workflows/patch-susfs/action.yml).
@@ -5437,11 +5485,12 @@ jobs:
               "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
             printf -- '- `%s` sudah berformat AnyKernel3: flash langsung lewat\n' "$ZIP"
             printf -- '  recovery/KernelSU, tidak perlu dibongkar dulu.\n'
-            printf -- '- Kernel ini memakai **xxKSU** (backslashxx/KernelSU) + **SUSFS %s**\n' "$SUSFS_VER"
+            printf -- '- Kernel ini memakai **xxKSU** (dlagia/backupxksu) + **SUSFS %s**\n' "$SUSFS_VER"
             printf -- '  (ala Najip: glue parent-kernel + lifecycle 0002, tanpa BakaSU) +\n'
             printf -- '  **NoMount** (opsi SUSFS = JackA1ltman, tanpa fgetpriority), uname\n'
-            printf -- '  `4.14.186-perf`. Manager: APK dari halaman rilis\n'
-            printf -- '  backslashxx/KernelSU (versi %s); manager BakaSU tidak dikenali.\n' "$KSU_VER"
+            printf -- '  `4.14.186-perf`. Manager: APK `arm64-v8a` non-GKI dari rilis\n'
+            printf -- '  https://github.com/dlagia/backupxksu/releases (versi kernel %s, UAPI v6,\n' "$KSU_VER"
+            printf -- '  v2-only `0x363`/`4359c171...`); manager BakaSU tidak dikenali.\n'
             printf -- '- `TIF_PROC_UMOUNTED` dipasang otomatis untuk aplikasi non-root\n'
             printf -- '  turunan zygote (tetap bekerja walau `kernel_umount` mati atau hanya\n'
             printf -- '  memakai NoMount tanpa metamodule overlayfs).\n'
@@ -5729,7 +5778,7 @@ jobs:
             rm -f "$F"
           done <<'DAFTAR'
           KERNEL_PIN;dlagia/android_kernel_xiaomi_rosemary;kernel
-          KSU_PIN;backslashxx/KernelSU;ksu
+          KSU_PIN;dlagia/backupxksu;ksu
           SUSFS_PIN;JackA1ltman/NonGKI_Kernel_Build_2nd;susfs
           NAJIP_PIN;Najip/KernelSU_SUSFS_Samsung_SM-A325X;najip
           NOMOUNT_PIN;maxsteeel/nomount;nomount

@@ -197,7 +197,7 @@ jobs:
           #   - proton-clang   : apa pun = ganti compiler.
           KOMPONEN='
           ^KERNEL_PIN=[0-9a-f]{40};dlagia/android_kernel_xiaomi_rosemary;rosemary-13;.;source kernel
-          ^KSU_PIN=[0-9a-f]{40};backslashxx/KernelSU;master;^kernel/;xxKSU
+          ^KSU_PIN=[0-9a-f]{40};dlagia/backupxksu;final;^kernel/;xxKSU
           ^SUSFS_PIN=[0-9a-f]{40};JackA1ltman/NonGKI_Kernel_Build_2nd;mainline;^Patches/Patch/susfs_patch_to_4\.14\.patch$;SUSFS
           ^NAJIP_PIN=[0-9a-f]{40};Najip/KernelSU_SUSFS_Samsung_SM-A325X;main;^patches/kernelsu/0002-susfs-lifecycle-calls\.patch$;Najip lifecycle
           ^NOMOUNT_PIN=[0-9a-f]{40};maxsteeel/nomount;dev;^(kernel/src/|userspace/src/);NoMount driver
