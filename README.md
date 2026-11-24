@@ -1,5 +1,9 @@
 # rosemary
 
+> **Dipindahkan ke repo terpadu:** Build aktif **Kernel Rosemary + xxKSU Manager APK** kini disatukan dalam satu repositori di **[dlagia/backupxksu](https://github.com/dlagia/backupxksu)** (cabang `final`, satu pipeline paralel & satu halaman Releases).
+>
+> Repo `dlagia/rosemary` ini dipertahankan apa adanya sebagai arsip sejarah rilis (`titik-20261123-145519`, `titik-20261122-140010`, dan `arsip-sumber`); jadwal cron `pin-watch` & `bersihkan` di sini dinonaktifkan agar tidak menggandakan notifikasi, sementara tombol `workflow_dispatch` tetap tersedia jika sewaktu-waktu diperlukan.
+
 Kernel Xiaomi rosemary (Redmi Note 10S, Linux 4.14.357 LTS dari OpenELA) dengan xxKSU
 (dlagia/backupxksu) + SUSFS v2.4.0 ala Najip (glue parent-kernel, opsi
 SUSFS = JackA1ltman) + NoMount, `uname -r` = `4.14.186-perf` (sama dengan kernel stok),

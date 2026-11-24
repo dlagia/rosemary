@@ -73,31 +73,10 @@
 name: Pantau pin upstream
 
 on:
-  schedule:
-    # Revisi ke-32 menggeser '0 1 * * *' -> '23 1 * * *' dengan dugaan: menit :00
-    # adalah menit terpadat di GitHub dan run terjadwal repo PRIVAT mengantre di
-    # belakangnya, jadi menit ganjil mestinya lolos.
-    #
-    # REVISI KE-37 - DUGAAN ITU SALAH, dan datanya sekarang cukup untuk bilang
-    # begitu. Keempat run terjadwal yang pernah ada:
-    #
-    #   cron :00  -> mulai 05:52Z (14 Sep), 05:54Z (15 Sep)
-    #   cron :23  -> mulai 06:14Z (16 Sep), 06:16Z (17 Sep)
-    #
-    # Telatnya ~4 jam 51 menit di KEEMPAT-empatnya. Menggeser jadwal 23 menit
-    # hanya menggeser waktu mulai 23 menit - offset-nya tidak bergerak sedikit
-    # pun. Dan dua run terakhir terjadi SESUDAH repo dijadikan publik (revisi
-    # ke-36), jadi "repo privat mengantre" juga bukan sebabnya. Ini antrean
-    # scheduler GitHub, di luar jangkauan berkas ini.
-    #
-    # Sengaja TIDAK dikompensasi dengan menggeser cron ~4j51m lebih awal:
-    # offset itu milik GitHub, bukan kontrak. Begitu mereka memperbaiki
-    # antreannya, laporan justru mendarat jam 3 pagi. Yang membuat keterlambatan
-    # ini tidak penting bukan jadwalnya, melainkan trigger `push: pins.env` dan
-    # panggilan eksplisit dari naikkan-pin.yml di bawah - jadwal cuma jaring
-    # terakhir. Jam di badan issue selalu jam NYATA run, jadi laporannya sendiri
-    # tidak pernah berbohong soal ini; yang dulu berbohong komentar ini.
-    - cron: '23 1 * * *'
+  # Dinonaktifkan (2026-11-24): pemantauan harian aktif dipindahkan ke repo
+  # terpadu dlagia/backupxksu (cabang final) agar tidak memunculkan issue ganda.
+  # schedule:
+  #   - cron: '23 1 * * *'
   workflow_dispatch:
   # Revisi ke-32 - LUBANG YANG DITAMBAL DI SINI. Sampai revisi ke-31 robot ini
   # hanya jalan lewat jadwal dan tombol, sehingga TIDAK ADA yang menghubungkan

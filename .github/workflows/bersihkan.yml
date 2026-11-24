@@ -20,8 +20,10 @@
 name: Bersihkan
 
 on:
-  schedule:
-    - cron: '41 2 * * 0'   # Minggu 09:41 WIB
+  # Dinonaktifkan (2026-11-24): jadwal mingguan aktif dipindahkan ke repo
+  # terpadu dlagia/backupxksu (cabang final); jalankan manual bila diperlukan.
+  # schedule:
+  #   - cron: '41 2 * * 0'   # Minggu 09:41 WIB
   workflow_dispatch:
     inputs:
       coba:
