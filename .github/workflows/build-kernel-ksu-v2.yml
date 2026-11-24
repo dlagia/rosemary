@@ -1676,26 +1676,34 @@
 # (d) Delapan pin = HEAD upstream, tanpa ORPHAN. Mundur: rilis
 #     build-20261122-115328 (rosemary-7) atau titik-20261122-105230.
 #
-# CABANG UJI-SEPOLICY-TIMING (2026-11-23, Antigravity) - perbaikan timing A-B
-# SELinux (Duck Detector `ksu_types timing with invalid types` pada
-# `/sys/fs/selinux/context` dan `/proc/self/attr/current`, PR #451/#452):
-# - Alih-alih memotong jalur `SEL_CONTEXT` lebih awal dengan `pr_info` +
-#   `do_useless_alloc()` atau menolak sesudah `security_context_to_sid()`
-#   selesai (yang menimbulkan selisih +3384 ns pada MT6785), penyaringan
-#   tipe tersembunyi dipindah langsung ke `security/selinux/ss/services.c`
-#   (`string_to_context_struct()`) melalui bit `type_datum.ksu_hidden`
-#   (memakai 1 byte padding struct, ukuran tetap 12 B).
-# - Hanya tipe non-atribut baru yang dibuat `add_type()` di `sepolicy.c`
-#   (`ksu`, `ksu_file`, tipe modul baru) yang ditandai `ksu_hidden = 1`;
-#   tipe stok, jalur `force=1` (`inode_doinit_with_dentry`, `CAP_MAC_ADMIN`),
-#   `convert_context()`, dan proses non-app (`uid < 10000` atau tanpa
-#   `TIF_SECCOMP`) tidak tersentuh.
-# - `sh_simple_transaction_get` dan fallback `ksu_selinux_transaction_write`
-#   kini hanya menyaring rule `SEL_ACCESS` (`ksu_should_destroy_access_rule`,
-#   `pr_info_ratelimited`, tanpa `do_useless_alloc`); hook LSM `setprocattr`
-#   dan `inode_setxattr` dikembalikan ke fungsi stok tanpa binary branch
-#   patch ke `sh_security_context_to_sid*`. Status toggle `selinux_hide`
-#   disinkronkan lewat `xxksu_selinux_hide_enabled` (tersembunyi di kallsyms).
+# REVISI ROSEMARY-9 (2026-11-24, Antigravity) - promosi cabang uji
+# `uji-sepolicy-timing` (prerelease `build-20261123-145519` / tag
+# `titik-20261123-145519` terbukti boot normal & deteksi A-B SELinux Duck
+# Detector bersih) masuk `main`, plus jaring fallback `arsip-sumber`:
+# (a) Perbaikan timing A-B SELinux (Duck Detector `ksu_types timing with
+#     invalid types` pada `/sys/fs/selinux/context` & `/proc/self/attr/current`):
+#     - Penyaringan tipe tersembunyi dipindah native ke
+#       `security/selinux/ss/services.c:string_to_context_struct()` lewat
+#       `type_datum.ksu_hidden` (1 byte padding struct, ukuran tetap 12 B).
+#     - Hanya tipe non-atribut baru dari `add_type()` di `sepolicy.c` (`ksu`,
+#       `ksu_file`, tipe modul baru) yang ditandai `ksu_hidden = 1`; tipe stok,
+#       jalur `force=1` (`inode_doinit_with_dentry`, `CAP_MAC_ADMIN`),
+#       `convert_context()`, dan non-app (`uid < 10000` atau tanpa
+#       `TIF_SECCOMP`) tidak tersentuh.
+#     - `sh_simple_transaction_get` & fallback `ksu_selinux_transaction_write`
+#       hanya menyaring rule `SEL_ACCESS` (`ksu_should_destroy_access_rule`,
+#       `pr_info_ratelimited`, tanpa `do_useless_alloc`); LSM `setprocattr` &
+#       `inode_setxattr` dipulihkan ke stok tanpa binary branch patch ke
+#       `sh_security_context_to_sid*`. Status toggle disinkronkan lewat
+#       `xxksu_selinux_hide_enabled` (tersembunyi di kallsyms).
+# (b) Fallback otomatis ke rilis `arsip-sumber` di step "Integrasikan xxKSU"
+#     untuk `ksu-${KSU_PIN:0:12}.bundle` (upstream `backslashxx/KernelSU`
+#     menjawab 404 pada 2026-11-24) dan `najip-${NAJIP_PIN:0:12}.tar.gz`
+#     (upstream Najip `main` pindah ke BakaSU dan menghapus `0002`). Semua
+#     penjaga SHA40/sha256 tetap berlaku persis sama.
+# (c) Kedelapan pin tidak berubah; kode C kernel identik dengan
+#     `titik-20261123-145519`. Mundur: `titik-20261123-145519` atau
+#     `titik-20261122-140010` (rosemary-8).
 # ============================================================
 
 name: Build Kernel Rosemary (xxKSU + SUSFS + NoMount)
@@ -2068,6 +2076,9 @@ jobs:
       # diganti xxKSU. Alasan dan batasnya di kepala berkas, REVISI KE-118.
       - name: Integrasikan xxKSU (backslashxx/KernelSU, setup.sh resmi, di-PIN)
         working-directory: kernel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -2099,15 +2110,32 @@ jobs:
           echo "OK: source kernel polos (nol ksu_handle_/CONFIG_KSU/susfs)"
 
           # setup.sh diambil dari commit pin yang sama, bukan dari branch.
-          curl -fLSs "https://raw.githubusercontent.com/backslashxx/KernelSU/${KSU_PIN}/kernel/setup.sh" \
-            -o /tmp/xxksu_setup.sh
-          grep -q 'git clone https://github.com/backslashxx/KernelSU' /tmp/xxksu_setup.sh || {
-            echo "ERROR: setup.sh xxKSU tidak lagi meng-clone backslashxx/KernelSU:"
-            grep -n 'git clone' /tmp/xxksu_setup.sh || true
-            exit 1
-          }
-          bash /tmp/xxksu_setup.sh "$KSU_PIN" < /dev/null
-          rm -f /tmp/xxksu_setup.sh
+          # Jika upstream backslashxx/KernelSU hilang/404, fallback otomatis ke
+          # bundle riwayat penuh di rilis `arsip-sumber` repo ini.
+          if curl -fLSs "https://raw.githubusercontent.com/backslashxx/KernelSU/${KSU_PIN}/kernel/setup.sh" \
+               -o /tmp/xxksu_setup.sh && \
+             git ls-remote --exit-code "https://github.com/backslashxx/KernelSU.git" HEAD >/dev/null 2>&1; then
+            grep -q 'git clone https://github.com/backslashxx/KernelSU' /tmp/xxksu_setup.sh || {
+              echo "ERROR: setup.sh xxKSU tidak lagi meng-clone backslashxx/KernelSU:"
+              grep -n 'git clone' /tmp/xxksu_setup.sh || true
+              exit 1
+            }
+            bash /tmp/xxksu_setup.sh "$KSU_PIN" < /dev/null
+            rm -f /tmp/xxksu_setup.sh
+          else
+            rm -f /tmp/xxksu_setup.sh
+            echo "[!] Upstream backslashxx/KernelSU tidak terjangkau - fallback ke arsip-sumber (ksu-${KSU_PIN:0:12}.bundle)"
+            KSU_BUNDLE="/tmp/ksu-${KSU_PIN:0:12}.bundle"
+            gh release download arsip-sumber --repo "$GH_REPO" \
+              --pattern "ksu-${KSU_PIN:0:12}.bundle" --dir /tmp --clobber
+            test -s "$KSU_BUNDLE" || { echo "ERROR: bundle $KSU_BUNDLE tidak ada di arsip-sumber"; exit 1; }
+            git clone -q -b pin "$KSU_BUNDLE" KernelSU
+            rm -f "$KSU_BUNDLE"
+            git -C KernelSU checkout -q "$KSU_PIN"
+            ln -sf "../KernelSU/kernel" drivers/kernelsu
+            grep -q "kernelsu" drivers/Makefile || printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+            grep -q 'source "drivers/kernelsu/Kconfig"' drivers/Kconfig || sed -i '/endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          fi
 
           test -d KernelSU/.git || { echo "ERROR: KernelSU/ tidak dibuat setup.sh"; exit 1; }
 
@@ -2172,9 +2200,17 @@ jobs:
           # dan tidak menyentuh hook tabel syscall/LSM xxKSU. 0001-native-wrappers
           # Najip TIDAK dipakai (untuk hook manual; build ini hookless).
           NAJIP_0002=/tmp/najip_0002.patch
-          curl -fLSs --retry 3 \
+          if ! curl -fLSs --retry 3 \
             "https://raw.githubusercontent.com/Najip/KernelSU_SUSFS_Samsung_SM-A325X/${NAJIP_PIN}/patches/kernelsu/0002-susfs-lifecycle-calls.patch" \
-            -o "$NAJIP_0002"
+            -o "$NAJIP_0002"; then
+            echo "[!] Upstream Najip tidak terjangkau - fallback ke arsip-sumber (najip-${NAJIP_PIN:0:12}.tar.gz)"
+            NAJIP_TGZ="/tmp/najip-${NAJIP_PIN:0:12}.tar.gz"
+            gh release download arsip-sumber --repo "$GH_REPO" \
+              --pattern "najip-${NAJIP_PIN:0:12}.tar.gz" --dir /tmp --clobber
+            test -s "$NAJIP_TGZ" || { echo "ERROR: arsip $NAJIP_TGZ tidak ada di arsip-sumber"; exit 1; }
+            tar -xzf "$NAJIP_TGZ" -O --wildcards '*/patches/kernelsu/0002-susfs-lifecycle-calls.patch' > "$NAJIP_0002"
+            rm -f "$NAJIP_TGZ"
+          fi
           # Isi dikunci sha256: NAJIP_PIN boleh naik tanpa 0002 berubah, tapi
           # kalau 0002 berubah build berhenti di sini dan wajib diaudit ulang.
           echo "c4f70fb4ef510bbf06e9fc215e64aababe751573f0b8c851d93881cd322990bf  $NAJIP_0002" | sha256sum -c -
